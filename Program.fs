@@ -84,30 +84,26 @@ let rec runAssembler (cpu: CPU) =
   
 
     /// Parse a number in hex,binary or decimal
-    let parseImm (s:string) = 
+    let parseImm isImms5 (s:string) = 
+        let (loLimit,hiLimit) = if isImms5 then (-16,15) else (-128,256)
         try Some(int32 s) with | e -> None
         |> (function | None -> Error $"can't parse {s} as an integer"                 
                      | Some n -> Ok n)
         |> Result.bind (fun n -> 
-             if n >= 0 && n < 256 then 
+             if n >= 0 && n < hiLimit then 
                 Ok (makeImmOp n) 
-             elif n < 0 && n >= -128 then
-                Ok (makeImmOp (n+128))
-             else Error $"Invalid Imm8 operand {n} - must be in range -128..255")
+             elif n < 0 then
+                Ok (makeImmOp (n &&& (-loLimit*2 - 1)))
+             else Error $"Invalid Imm8 operand {n} - must be in range {loLimit}..{hiLimit}")
 
 
-    /// Parse the Rb, #imms8 part (only for EEP1
-    let parseRegBAndImms5 b c =
+    /// Parse the Rb, #imms8 part (only for EEP1).
+    /// b - the register number already passed.
+    /// imms5 - the string to parse as an imms5
+    let parseRegBAndImms5 b imms5 =
         if cpu <> EEP1 then Error "Detected a register + Imms5 format, this is only valid for EEP1"
         else 
-            parseImm c
-            |> Result.bind (fun c -> 
-                if c > 15 || c < -16 then 
-                    Error "Imms5 (c) must be in range -16..15" 
-                elif c < 0 then 
-                    Ok (c + 16)
-                else
-                    Ok c)
+            parseImm true imms5
             |> Result.map (fun c -> (b <<< regBFieldOffset cpu) + c)
 
     /// Parse the 'Op' part of the assembler
@@ -120,12 +116,12 @@ let rec runAssembler (cpu: CPU) =
         | [ RegMatch b ]-> 
             /// It must be either Rb (EEP0 and EEP1)
             Ok (makeRegOp b)
-        | [ RegMatch b ; ","; "#"; c]
+        | [ RegMatch b ; ","; c]
         | [ RegMatch b ; ","; "#"; c] ->
             parseRegBAndImms5 b c
         | ["#" ; c ] ->
-            parseImm c
-        | [c] -> parseImm c
+            parseImm false c
+        | [c] -> parseImm false c
         | _ -> 
             let cs = String.concat " " op
             Error "Can't parse '{cs}' as '#N' or 'Ra'"
@@ -165,7 +161,7 @@ let rec runAssembler (cpu: CPU) =
                     String.trim line
                     |> parse
                     |> (function | Ok n -> printfn "Machine Code: 0x%04x 0b%016B" n n
-                                 | Error mess -> printfn "%s" mess)
+                                 | Error mess -> printfn $"Error in '{line}\n{mess}")
     doLoop()
 
 runAssembler EEP0
