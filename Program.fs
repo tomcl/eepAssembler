@@ -11,16 +11,20 @@ let tokenize (s:string) =
     |> Array.toList
     |> List.map (fun s -> s.ToUpper())
 
+/// The b register number field bit offset
 let regBFieldOffset cpu =
-    if cpu = EEP1 then 6 else 8
+    if cpu = EEP1 then 5 else 8
 
-let regAFieldOffset cpu =
-     if cpu = EEP1 then 9 else 12
+/// The a register number field bit offset
+let regAFieldOffset cpu = 
+    if cpu = EEP1 then 9 else 10 
 
+/// The bit that signifies the immediate form of operand
 let immediateOpOffset cpu =
-    if cpu = EEP1 then 9 else 12
+    if cpu = EEP1 then 8 else 12
 
-
+/// Top-level function to run assembler: assembles EEP0 and EEP1.
+/// Recursively calls itself if given command to go to the "other" CPU.
 let rec runAssembler (cpu: CPU) =
     let thisCPU = cpu.ToString()
     let switchTo = if cpu = EEP0 then "EEP1" else "EEP0"
@@ -64,23 +68,35 @@ let rec runAssembler (cpu: CPU) =
         (if cpu = EEP1 then eep0regs @ eep1regs else eep0regs)
         |> Map.ofList
 
+
+    /// match a register (Rx)
     let (|RegMatch|_|) ra = Map.tryFind ra regs
 
+    /// Single bit in position n
     let bit n = 1 <<< n
 
+    /// return the code (correctly aligned) for Rb
     let makeRegOp n = n <<< regBFieldOffset cpu
 
+    /// return the code (correctly aligned) for an immediate Op
+    /// The caller must check that n is in the correct range for Imm8 or Imms5
     let makeImmOp n = bit (immediateOpOffset cpu) + n
   
+
+    /// Parse a number in hex,binary or decimal
     let parseImm (s:string) = 
         try Some(int32 s) with | e -> None
         |> (function | None -> Error $"can't parse {s} as an integer"                 
                      | Some n -> Ok n)
         |> Result.bind (fun n -> 
-             if n >= 0 && n < 256 
-             then Ok (makeImmOp n) 
-             else Error $"Invalid Imm8 operand {n}")
+             if n >= 0 && n < 256 then 
+                Ok (makeImmOp n) 
+             elif n < 0 && n >= -128 then
+                Ok (makeImmOp (n+128))
+             else Error $"Invalid Imm8 operand {n} - must be in range -128..255")
 
+
+    /// Parse the Rb, #imms8 part (only for EEP1
     let parseRegBAndImms5 b c =
         if cpu <> EEP1 then Error "Detected a register + Imms5 format, this is only valid for EEP1"
         else 
@@ -94,10 +110,12 @@ let rec runAssembler (cpu: CPU) =
                     Ok c)
             |> Result.map (fun c -> (b <<< regBFieldOffset cpu) + c)
 
+    /// Parse the 'Op' part of the assembler
     let rec parseOp (op: string list) =
         match op with
         | "[" :: op' -> 
             // remove the [ op ] brackets, for optional LDR, STR syntax
+            // should really only allow these for LDR,STR, they are allowed for anything!
             parseOp op'[0..op'.Length-2]
         | [ RegMatch b ]-> 
             /// It must be either Rb (EEP0 and EEP1)
@@ -112,6 +130,8 @@ let rec runAssembler (cpu: CPU) =
             let cs = String.concat " " op
             Error "Can't parse '{cs}' as '#N' or 'Ra'"
 
+    // Tokenizes, then parses, a line of text, 
+    // printing the assembly or an error message
     let parse (s:string) =
         let tokens = tokenize s
         match tokens with
@@ -130,7 +150,7 @@ let rec runAssembler (cpu: CPU) =
                 |> Result.map (fun op -> jumpOpc + op )
         
 
-    // For more information see https://aka.ms/fsharp-console-apps
+    /// runs the assembler RAPL
     let doLoop() =
         let mutable running = true
         while running do
