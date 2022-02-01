@@ -2,10 +2,18 @@
 
 A simple assembler for EEP0 and EEP1 CPU as taught at Imperial College 2022
 
-This F# code could be run under dotnet or as a windows executable. The repo has a .Net 6 build so should be compatible with any platform - just install dotnet 6 runtime.
+*This code is written by Tom Clarke with no guarantee as to its correctness: please e-mail me if you find errors*
 
-To develop source:
-* Install dotnet 6 SDK
-* Install Visual Studio with F# desktop and dotnet core payloads or Install Visual Studio Code with Ionode
+Use issues on this repo for feature requests
 
-See [HLP setup](https://intranet.ee.ic.ac.uk/t.clarke/hlp/install-notes.html) for more details.
+The F# source is in `./dotnet6/eepassem/Program.fs`
+
+It can be run EITHER as a dotnet 6 project OR as a windows executable project from the `dotnet6` or `windows` directories respectively
+
+To develop source on windows, or just to run the program:
+* Install *Visual Studio 2022* with F# desktop
+* load `./windows/eepassem.sln`
+
+See [HLP setup](https://intranet.ee.ic.ac.uk/t.clarke/hlp/install-notes.html) for more details of different dev environments.
+
+

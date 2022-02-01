@@ -7,7 +7,7 @@ type CPU = EEP0 | EEP1
 /// split the input line, remove white space, return list of strings as tokens
 let tokenize (s:string) =
     let s' = s.Replace("#"," # ").Replace(","," , ").Replace("["," [ ").Replace("]"," ] ")
-    s'.Split(" ", StringSplitOptions.RemoveEmptyEntries)
+    s'.Split([|' '|], StringSplitOptions.RemoveEmptyEntries)
     |> Array.toList
     |> List.map (fun s -> s.ToUpper())
 
@@ -33,22 +33,22 @@ let rec runAssembler (cpu: CPU) =
     printfn $"type lines of {thisCPU} assembler:"
     
 
-    let eep0regOps = ["MOV",0; "ADD",0x1000; "SUB",0x2000; "ADC",0x3000]
+    let commonRegOps = ["MOV",0; "ADD",0x1000; "SUB",0x2000; "ADC",0x3000]
     let eep0MemOps = ["LDR", 0x4000; "STR",0x5000]
-    let newRegOps = ["SBC",0x4000; "AND",0x5000; "XOR",0x6000; 
+    let eep1RegOps = ["SBC",0x4000; "AND",0x5000; "XOR",0x6000; 
                      "LSL",0x7000; "LDR", 0x8000; "STR",0xA000]
 
     let regOps = 
         match cpu with
-        | EEP1 -> newRegOps @ eep0regOps
-        | EEP0 -> eep0regOps @ eep0MemOps
+        | EEP1 -> eep1RegOps @ commonRegOps
+        | EEP0 -> commonRegOps @ eep0MemOps
         |> Map.ofList
 
     let eep0jumps = ["JMP",0x4000; "JNE",0x5000; "JCS",0x6000; "JMI",0x7000]
     let eep1jumps =
         let makeCode opc n = (opc <<< 9) + (n <<< 8) + 0xC000
         [
-            "JMP",""
+            "JMP","XXX"
             "JNE","JEQ"
             "JCS","JCC"
             "JMI","JPL"
