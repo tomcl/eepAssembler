@@ -23,6 +23,100 @@ let regAFieldOffset cpu =
 let immediateOpOffset cpu =
     if cpu = EEP1 then 8 else 12
 
+let eep1RegOps = ["MOV",0; "ADD",0x1000; "SUB",0x2000; "ADC",0x3000; "SBC",0x4000; "AND",0x5000; "XOR",0x6000; 
+                    "LSL",0x7000; "LDR", 0x8000; "STR",0xA000]
+let eep0RegOps = ["MOV",0; "ADD",0x2000; "SUB",0x4000; "ADC",0x6000; "LDR", 0x8000; "STR",0xA000]
+
+
+let regOps cpu = 
+    match cpu with
+    | EEP1 -> eep1RegOps
+    | EEP0 -> eep0RegOps
+    |> Map.ofList
+
+let eep0jumps = ["JMP",0xC000; "JNE",0xD000; "JCS",0xE000; "JMI",0xF000]
+let eep1jumps =
+    let makeCode opc n = (opc <<< 9) + (n <<< 8) + 0xC000
+    [
+        "JMP","XXX"
+        "JNE","JEQ"
+        "JCS","JCC"
+        "JMI","JPL"
+        "JGE","JLT"
+        "JGT","JLE"
+        "JHI","JLS"
+        "JSR","RET"
+    ]
+    |> List.mapi (fun i (xx,nxx) -> [xx,makeCode i 0; nxx, makeCode i 1])
+    |> List.concat
+    |> Map.ofList
+
+let jumps cpu = if cpu = EEP1 then eep1jumps else Map.ofList eep0jumps
+let eep0regs =  ["R0",0; "R1",1; "R2",2; "R3",3]
+let eep1regs =  ["R4",4; "R5",5; "R6",6; "R7",7]
+let regs cpu = 
+    (if cpu = EEP1 then eep0regs @ eep1regs else eep0regs)
+    |> Map.ofList
+
+
+/// match a register (Rx)
+let (|RegMatch|_|) cpu ra = Map.tryFind ra (regs cpu)
+
+/// Single bit in position n
+let bit n = 1 <<< n
+
+
+
+
+//------------------------------------------------------------------------//
+//------------------------ Very simple disassembler-----------------------//
+//------------------------------------------------------------------------//
+
+type Field = {
+     StartBit: int
+     Size: int
+     Name: string
+}
+
+let makeFields sL =
+    let makeF (start, fields) (name,size) = (start+size, fields @ [{Name=name; Size=size; StartBit = start-size}])
+    ((15,[]), sL)
+    ||> List.fold makeF
+    |> snd
+
+    
+
+let printNextField msBitNum (f:Field) : Result<string,string> =
+    let fMSBitNum = f.StartBit + f.Size
+    let printData f = sprintf $" {f.Name}:I({fMSBitNum}:{f.StartBit})"
+    let printDontCares a b = 
+        " " + ([a..b] |> List.map (fun _ -> "X") |> String.concat "")
+    if msBitNum < fMSBitNum then
+        Error $"Can't print {f} from MS Bit = {msBitNum}"
+    else
+        Ok ((printDontCares msBitNum fMSBitNum) + printData f)
+    
+
+let rec printFields (iWord: uint32) (mSBitNum: int) (fL: Field list) =
+    match fL with
+    | [] when mSBitNum = 0 -> 
+        ""
+    | [] -> 
+        sprintf $"Can't print {fL} with MS bit = {mSBitNum}"
+    | f :: fL' -> 
+        match printNextField mSBitNum f with
+        | Error eMess -> eMess
+        | Ok mess -> mess + printFields iWord f.StartBit fL'
+
+
+
+let dissAssembleFixed (iWord: uint32) (mSBit: int) ( spec: (string * int) list) =
+    spec
+    |> makeFields
+    |> printFields iWord 15
+
+
+
 /// Top-level function to run assembler: assembles EEP0 and EEP1.
 /// Recursively calls itself if given command to go to the "other" CPU.
 let rec runAssembler (cpu: CPU) =
@@ -33,47 +127,11 @@ let rec runAssembler (cpu: CPU) =
     printfn $"type lines of {thisCPU} assembler:"
     
 
-    let commonRegOps = ["MOV",0; "ADD",0x1000; "SUB",0x2000; "ADC",0x3000]
-    let eep0MemOps = ["LDR", 0x4000; "STR",0x5000]
-    let eep1RegOps = ["SBC",0x4000; "AND",0x5000; "XOR",0x6000; 
-                     "LSL",0x7000; "LDR", 0x8000; "STR",0xA000]
 
-    let regOps = 
-        match cpu with
-        | EEP1 -> eep1RegOps @ commonRegOps
-        | EEP0 -> commonRegOps @ eep0MemOps
-        |> Map.ofList
+   //------------------------------------------------------------------------//
+   //------------------------------ Assembler--------------------------------//
+   //------------------------------------------------------------------------//
 
-    let eep0jumps = ["JMP",0x4000; "JNE",0x5000; "JCS",0x6000; "JMI",0x7000]
-    let eep1jumps =
-        let makeCode opc n = (opc <<< 9) + (n <<< 8) + 0xC000
-        [
-            "JMP","XXX"
-            "JNE","JEQ"
-            "JCS","JCC"
-            "JMI","JPL"
-            "JGE","JLT"
-            "JGT","JLE"
-            "JHI","JLS"
-            "JSR","RET"
-        ]
-        |> List.mapi (fun i (xx,nxx) -> [xx,makeCode i 0; nxx, makeCode i 1])
-        |> List.concat
-        |> Map.ofList
-
-    let jumps = if cpu = EEP1 then eep1jumps else Map.ofList eep0jumps
-    let eep0regs =  ["R0",0; "R1",1; "R2",2; "R3",3]
-    let eep1regs =  ["R4",4; "R5",5; "R6",6; "R7",7]
-    let regs = 
-        (if cpu = EEP1 then eep0regs @ eep1regs else eep0regs)
-        |> Map.ofList
-
-
-    /// match a register (Rx)
-    let (|RegMatch|_|) ra = Map.tryFind ra regs
-
-    /// Single bit in position n
-    let bit n = 1 <<< n
 
     /// return the code (correctly aligned) for Rb
     let makeRegOp n = n <<< regBFieldOffset cpu
@@ -113,11 +171,11 @@ let rec runAssembler (cpu: CPU) =
             // remove the [ op ] brackets, for optional LDR, STR syntax
             // should really only allow these for LDR,STR, they are allowed for anything!
             parseOp op'[0..op'.Length-2]
-        | [ RegMatch b ]-> 
+        | [ RegMatch cpu b ]-> 
             /// It must be either Rb (EEP0 and EEP1)
             Ok (makeRegOp b)
-        | [ RegMatch b ; ","; c]
-        | [ RegMatch b ; ","; "#"; c] ->
+        | [ RegMatch cpu b ; ","; c]
+        | [ RegMatch cpu b ; ","; "#"; c] ->
             parseRegBAndImms5 b c
         | ["#" ; c ] ->
             parseImm false c
@@ -132,14 +190,14 @@ let rec runAssembler (cpu: CPU) =
         let tokens = tokenize s
         match tokens with
         | [] -> Error ""
-        | opc :: RegMatch ra :: "," :: op ->
-            match Map.tryFind opc regOps with
+        | opc :: RegMatch cpu ra :: "," :: op ->
+            match Map.tryFind opc (regOps cpu) with
             | None -> Error $"Expecting: register or memory opcode, not {opc}"
             | Some regOpc -> 
                 parseOp op
                 |> Result.map (fun op ->regOpc + (ra <<< regAFieldOffset cpu) + op )
         | opc :: op ->
-            match Map.tryFind opc jumps with
+            match Map.tryFind opc (jumps cpu) with
             | None -> Error $"Expecting: jump opcode, not {opc}"
             | Some jumpOpc -> 
                 parseOp op
@@ -147,7 +205,7 @@ let rec runAssembler (cpu: CPU) =
         
 
     /// runs the assembler RAPL
-    let doLoop() =
+    let doLoop () =
         let mutable running = true
         while running do
                 printf ">>"
@@ -162,7 +220,7 @@ let rec runAssembler (cpu: CPU) =
                     |> parse
                     |> (function | Ok n -> printfn "Machine Code: 0x%04x 0b%016B" n n
                                  | Error mess -> printfn $"Error in '{line}\n{mess}")
-    doLoop()
+    doLoop ()
 
 runAssembler EEP0
 
