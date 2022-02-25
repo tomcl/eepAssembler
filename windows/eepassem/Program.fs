@@ -2,167 +2,328 @@
 open System
 open EEExtensions
 
-type CPU = EEP0 | EEP1
+type Register = Regist of int
+
+type Phase = | Phase1 | Phase2
+
+type SymTable = 
+    { Table: Map<string,int>; Phase : Phase}
+
+        member this.Lookup name =
+            match this.Phase, Map.tryFind name this.Table with
+            | _, Some n -> 
+                Ok n
+            | Phase1, None -> 
+                Ok 0
+            | Phase2, None   -> 
+                Error $"Can't find symbol '{name}' in symbol table"
+
+        member this.AddSymbol name value =
+            if Map.containsKey name this.Table then
+                Error $"Duplicate definition of symbol '{name}'"
+            else
+                Ok {this with Table = Map.add name value this.Table }
+
+        static member Initial = {Table = Map.empty; Phase = Phase1}
+    
+
+type IWord = 
+    {
+        Dat: uint32}
+        static member JmpCode = uint32 0xF000
+        static member AluOpcField n = uint32 (n <<< 12)
+        static member JmpOpcField n = uint32 (n <<< 9)
+        static member JmpInvBit b = uint32 <| if b then (1 <<< 8) else 0
+        static member Imm8Bit b = uint32 <| if b then (1 <<< 8) else 0
+        static member RaField n = uint32 (n <<< 9)
+        static member RbField n = uint32 (n <<< 5)
+        static member RbImms5 b imms5 = uint32 <| b <<< 5 + (imms5 &&& 0x1f)
+        static member Imm8Field n = uint32 ( n &&& 0xFF)
+
+type Token = 
+    | ALUOP of int 
+    | JMPOP of int * bool 
+    | MEMOP of int
+    | Imm of int 
+    | Reg of Register
+    | Symbol of string
+    | Hash
+    | LBra
+    | RBra
+    | ErrorTok of string
+
+
+
+type Line = 
+    {
+        Label: string option
+        Word: Result<uint32,string> option
+        LineNo: int
+        Address: uint32
+        Table: SymTable
+        Phase: Phase
+    }
+        static member First =
+            {
+                Label=None
+                Word = None
+                LineNo = 1
+                Address = 0u
+                Table = SymTable.Initial
+                Phase = Phase1
+            }
+
+
+
+type Op = 
+    | Imm8 of int 
+    | RegOp of (Register * int)
+    | SymImm8 of string
+
+let opMap: Map<string,Token> = 
+    Map.ofList [
+        "R0", Reg (Regist 0)
+        "R1", Reg (Regist 1)
+        "R2", Reg (Regist 2)
+        "R3", Reg (Regist 3)
+        "R4", Reg (Regist 4)
+        "R5", Reg (Regist 5)
+        "R6", Reg (Regist 6)
+        "R7", Reg (Regist 7)
+        "MOV", ALUOP 0
+        "ADD", ALUOP 1
+        "SUB", ALUOP 2
+        "ADC", ALUOP 3
+        "SBC", ALUOP 4
+        "AND", ALUOP 5
+        "XOR", ALUOP 6
+        "LSR", ALUOP 7
+        "LDR", MEMOP 0
+        "STR", MEMOP 1
+        "CMP", ALUOP 13
+        "JMP", JMPOP (0,false)
+        "EXT", JMPOP (0,true)
+        "JNE", JMPOP (1,false)
+        "JEQ", JMPOP (1,true)
+        "JCS", JMPOP (2,false)
+        "JCC", JMPOP (2,true)
+        "JMI", JMPOP (3,false)
+        "JPL", JMPOP (3,true)
+        "JGE", JMPOP (4,false)
+        "JLT", JMPOP (4,true)
+        "JGT", JMPOP (5,false)
+        "JLE", JMPOP (5,true)
+        "JHI", JMPOP (6,false)
+        "JLS", JMPOP (6,true)
+        "JSR", JMPOP (7,false)
+        "RET", JMPOP (7,true)
+        ]
+
+
+
 
 /// split the input line, remove white space, return list of strings as tokens
 let tokenize (s:string) =
     let s' = s.Replace("#"," # ").Replace(","," , ").Replace("["," [ ").Replace("]"," ] ")
-    s'.Split([|' '|], StringSplitOptions.RemoveEmptyEntries)
+    let sL =
+        s'.Split([|"//"|],StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+    let s =
+        match sL with
+        | [] -> ""
+        | line :: comment -> line
+    s.Split([|' '|], StringSplitOptions.RemoveEmptyEntries)
     |> Array.toList
     |> List.map (fun s -> s.ToUpper())
+    |> List.filter (fun s -> s <> "," && s <> "")
+    |> List.map (fun s -> 
+        match Map.tryFind s opMap with
+        | Some tok -> tok
+        | None when Seq.contains (s.Chars 0) "0123456789-" ->
+            try Some(int32 s) with | e -> None
+            |> (function | None -> ErrorTok $"can't parse {s} as an integer"                 
+                         | Some n -> Imm n)
+        | None when (Char.IsLetter (s.Chars 0))-> Symbol s
+        | None -> ErrorTok $"'{s} is not recognised")
 
-/// The b register number field bit offset
-let regBFieldOffset cpu =
-    if cpu = EEP1 then 5 else 8
 
-/// The a register number field bit offset
-let regAFieldOffset cpu = 
-    if cpu = EEP1 then 9 else 10 
+let makeOp isJmp (op:Op) =
+    fun (symTab:SymTable) ->
+        match op with
+        | Imm8 n when n <= 255 && n >= -128 -> 
+            Ok <| IWord.Imm8Field n
+        | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
+        | SymImm8 s ->
+            symTab.Lookup s
+            |> Result.map (fun n -> IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
+        | RegOp( r,n) when isJmp ->
+            Error $"Jump instruction is not allowed register operand '{r}+{n}'"
+        | RegOp(_,n) when n > 15 || n < -16 ->
+            Error $"Imms8 number {n} is not in range -16 .. +16"
+        | RegOp(Regist r,n) ->
+            Ok <| IWord.RbImms5 r n
 
-/// The bit that signifies the immediate form of operand
-let immediateOpOffset cpu =
-    if cpu = EEP1 then 8 else 12
+let makeAluOp n op =
+    fun symTab ->
+        makeOp false op symTab
+        |> Result.map (fun w -> w + IWord.AluOpcField n)
 
-/// Top-level function to run assembler: assembles EEP0 and EEP1.
-/// Recursively calls itself if given command to go to the "other" CPU.
-let rec runAssembler (cpu: CPU) =
-    let thisCPU = cpu.ToString()
-    let switchTo = if cpu = EEP0 then "EEP1" else "EEP0"
-    printfn $"{switchTo} - switches to {switchTo} assembler"
-    printfn "q - quits"
-    printfn $"type lines of {thisCPU} assembler:"
+
+
+let makeJmpOp n inv op =
+    fun symTab ->
+        makeOp false op symTab
+        |> Result.map (fun w -> 
+            w + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
+    
+            
+let rec (|ParseOp|_|) toks =
+    match toks with
+    | [Symbol s] -> 
+        Some (Ok (SymImm8 s))
+    | [Hash; Imm n] | [Imm n]-> 
+        Some (Ok (Imm8 n))
+    | [Reg r; Hash; Imm n] | [Reg r; Imm n] -> 
+        Some (Ok (RegOp(r, n)))
+    | [Reg r] -> 
+        Some (Ok (RegOp(r, 0)))
+    | _ -> None // nothing else matches.
+
+// Tokenizes, then parses, a line of text
+let rec parse (line: Line) (tokL: Token list) : Line =
+    let nl = {line with LineNo = line.LineNo + 1}
+    let lineError s = {nl with Word = Some <| Error s}
+    let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
+    match error, tokL with
+    | Some s, _ -> lineError $"Line {line.LineNo}: {s}"
+    | _, [] -> {nl with Word = None}
+    | _, Symbol s :: rest ->
+        match line.Label, line.Table.AddSymbol s (int line.Address) with
+        | Some s', _ -> 
+            lineError  $"Two labels: '{s}' and '{s'} are not allowed on one line"
+        | _, Error s -> lineError s
+        | _, Ok table ->
+            parse {line with Table = table; Label = Some s} rest
+    | _, ALUOP n :: ParseOp (Ok op) ->
+        {nl with Word = Some (makeAluOp n op line.Table)}
+    | _, JMPOP (n,inv) :: ParseOp (Ok op) ->
+        {nl with Word = Some (makeJmpOp n inv op line.Table)}
+    |_ -> lineError $"Unexpected parse error{tokL}"       
+
+/// runs the assembler RAPL
+let doLoop() =
+    let rec parseLine (line:Line) : Unit =
+            printf ">>"
+            let txt = Console.ReadLine() 
+            match String.trim txt with
+            | "q" -> 
+                ()
+            | txt ->
+                String.trim txt
+                |> tokenize
+                |> parse line
+                |> (fun line ->
+                    match line.Label, line.Word with
+                    | lab, Some(Ok w) ->
+                        printfn "Label = %A Machine Code: 0x%04x 0b%016B" lab w w
+                    | lab, None ->
+                        printfn $"no output, Label = {lab}"
+                    | _, Some (Error mess) ->
+                        printfn $"Error: {mess}"
+                    parseLine line)
+    parseLine Line.First
+ 
+
+let parseLines (txtL: string list) =
+    let errorLine (line:Line) (msg:string) =
+        $"Line no {line.LineNo}: %s{msg}"
+
+    let getErrors (lines: Line list) =
+        lines
+        |> List.collect (function | {Word=Some (Error msg )} as line -> 
+                                        [errorLine line msg]  
+                                  | _ -> [])
+
+    let parseFolder (line,outs) tokL =
+            let line = parse line tokL
+            line, outs @ [line]
+
+    let tokLines = 
+        txtL
+        |> List.map tokenize
+
+    let firstPass =
+        (Line.First, tokLines)
+        ||> List.scan parse
+
+    match getErrors firstPass with
+    | [] -> 
+        let init = {Line.First with Table = (List.last firstPass).Table}
+        ((init,[]), tokLines)
+        ||> List.fold parseFolder
+        |> (fun (line, outs) ->
+            match getErrors outs with
+            | [] ->  Ok outs
+            | lst -> Error lst)
+    | lst -> Error lst
+
+let assembler (path:string) =
+    let formatAssembly (lines: Line list) =
+        lines
+        |> List.map (fun line -> 
+            let num = line.Address
+            let word = match line.Word with | Some (Ok n) -> n | _ -> 0u
+            sprintf "%s" $"%02x{num}: %04x{word}")
+        |> String.concat "\n"
+    let ext = IO.Path.GetExtension path
+    let dir = IO.Path.GetDirectoryName
+    match ext with
+    | "txt" ->
+        IO.File.ReadAllLines path
+        |> Array.toList
+        |> parseLines
+        |> function | Error lst -> 
+                        printfn "Assembly Errors in file {path}:"
+                        printfn "%s" (String.concat "\n" lst)
+                        ()
+                    | Ok lst ->
+                        printfn "%s" (formatAssembly lst)
+                        ()
+                        
+    | s -> 
+        printfn $"EEP1asm is watching {dir}, noted a file extension {ext} only files with extension 'txt' will be assembled"
+
+
+
+let watch path =
+    let processFile (args: IO.FileSystemEventArgs) =
+        printfn "%s" args.FullPath
+    let fileSystemWatcher = new IO.FileSystemWatcher()   
+    fileSystemWatcher.Path <- path
+    fileSystemWatcher.NotifyFilter <- IO.NotifyFilters.LastWrite
+    fileSystemWatcher.EnableRaisingEvents <- true
+    fileSystemWatcher.IncludeSubdirectories <- true
+    fileSystemWatcher.Changed.Add processFile
+    fileSystemWatcher.Created.Add processFile
+    ()
+        
+ 
+[<EntryPoint>]
+let main argv = 
+    let d = IO.Directory.GetCurrentDirectory()
+    printfn "%s" d
+    let watchDir = d + "\\..\\..\\..\\..\\.."
+    let files = IO.Directory.EnumerateFiles watchDir |> Seq.toList
+    printfn "%A" files
+
+    printfn "%A" argv
+    0
+
+
+
+
+
     
 
-    let commonRegOps = ["MOV",0; "ADD",0x1000; "SUB",0x2000; "ADC",0x3000]
-    let eep0MemOps = ["LDR", 0x4000; "STR",0x5000]
-    let eep1RegOps = ["SBC",0x4000; "AND",0x5000; "XOR",0x6000; 
-                     "LSL",0x7000; "LDR", 0x8000; "STR",0xA000]
 
-    let regOps = 
-        match cpu with
-        | EEP1 -> eep1RegOps @ commonRegOps
-        | EEP0 -> commonRegOps @ eep0MemOps
-        |> Map.ofList
-
-    let eep0jumps = ["JMP",0x4000; "JNE",0x5000; "JCS",0x6000; "JMI",0x7000]
-    let eep1jumps =
-        let makeCode opc n = (opc <<< 9) + (n <<< 8) + 0xC000
-        [
-            "JMP","XXX"
-            "JNE","JEQ"
-            "JCS","JCC"
-            "JMI","JPL"
-            "JGE","JLT"
-            "JGT","JLE"
-            "JHI","JLS"
-            "JSR","RET"
-        ]
-        |> List.mapi (fun i (xx,nxx) -> [xx,makeCode i 0; nxx, makeCode i 1])
-        |> List.concat
-        |> Map.ofList
-
-    let jumps = if cpu = EEP1 then eep1jumps else Map.ofList eep0jumps
-    let eep0regs =  ["R0",0; "R1",1; "R2",2; "R3",3]
-    let eep1regs =  ["R4",4; "R5",5; "R6",6; "R7",7]
-    let regs = 
-        (if cpu = EEP1 then eep0regs @ eep1regs else eep0regs)
-        |> Map.ofList
-
-
-    /// match a register (Rx)
-    let (|RegMatch|_|) ra = Map.tryFind ra regs
-
-    /// Single bit in position n
-    let bit n = 1 <<< n
-
-    /// return the code (correctly aligned) for Rb
-    let makeRegOp n = n <<< regBFieldOffset cpu
-
-    /// return the code (correctly aligned) for an immediate Op
-    /// The caller must check that n is in the correct range for Imm8 or Imms5
-    let makeImmOp n = bit (immediateOpOffset cpu) + n
-  
-
-    /// Parse a number in hex,binary or decimal
-    let parseImm isImms5 (s:string) = 
-        let (loLimit,hiLimit) = if isImms5 then (-16,15) else (-128,256)
-        try Some(int32 s) with | e -> None
-        |> (function | None -> Error $"can't parse {s} as an integer"                 
-                     | Some n -> Ok n)
-        |> Result.bind (fun n -> 
-             if n >= 0 && n < hiLimit then 
-                Ok (makeImmOp n) 
-             elif n < 0 then
-                Ok (makeImmOp (n &&& (-loLimit*2 - 1)))
-             else Error $"Invalid Imm8 operand {n} - must be in range {loLimit}..{hiLimit}")
-
-
-    /// Parse the Rb, #imms8 part (only for EEP1).
-    /// b - the register number already passed.
-    /// imms5 - the string to parse as an imms5
-    let parseRegBAndImms5 b imms5 =
-        if cpu <> EEP1 then Error "Detected a register + Imms5 format, this is only valid for EEP1"
-        else 
-            parseImm true imms5
-            |> Result.map (fun c -> (b <<< regBFieldOffset cpu) + c)
-
-    /// Parse the 'Op' part of the assembler
-    let rec parseOp (op: string list) =
-        match op with
-        | "[" :: op' -> 
-            // remove the [ op ] brackets, for optional LDR, STR syntax
-            // should really only allow these for LDR,STR, they are allowed for anything!
-            parseOp op'[0..op'.Length-2]
-        | [ RegMatch b ]-> 
-            /// It must be either Rb (EEP0 and EEP1)
-            Ok (makeRegOp b)
-        | [ RegMatch b ; ","; c]
-        | [ RegMatch b ; ","; "#"; c] ->
-            parseRegBAndImms5 b c
-        | ["#" ; c ] ->
-            parseImm false c
-        | [c] -> parseImm false c
-        | _ -> 
-            let cs = String.concat " " op
-            Error "Can't parse '{cs}' as '#N' or 'Ra'"
-
-    // Tokenizes, then parses, a line of text, 
-    // printing the assembly or an error message
-    let parse (s:string) =
-        let tokens = tokenize s
-        match tokens with
-        | [] -> Error ""
-        | opc :: RegMatch ra :: "," :: op ->
-            match Map.tryFind opc regOps with
-            | None -> Error $"Expecting: register or memory opcode, not {opc}"
-            | Some regOpc -> 
-                parseOp op
-                |> Result.map (fun op ->regOpc + (ra <<< regAFieldOffset cpu) + op )
-        | opc :: op ->
-            match Map.tryFind opc jumps with
-            | None -> Error $"Expecting: jump opcode, not {opc}"
-            | Some jumpOpc -> 
-                parseOp op
-                |> Result.map (fun op -> jumpOpc + op )
-        
-
-    /// runs the assembler RAPL
-    let doLoop() =
-        let mutable running = true
-        while running do
-                printf ">>"
-                let line = Console.ReadLine() 
-                match String.trim line with
-                | "q" -> 
-                    running <- false
-                | line when line = switchTo ->
-                    runAssembler (if switchTo = "EEP1" then EEP1 else EEP0)
-                | line ->
-                    String.trim line
-                    |> parse
-                    |> (function | Ok n -> printfn "Machine Code: 0x%04x 0b%016B" n n
-                                 | Error mess -> printfn $"Error in '{line}\n{mess}")
-    doLoop()
-
-runAssembler EEP0
 
