@@ -5,8 +5,9 @@
 @echo off
 setlocal
 
+
 for /f "delims=" %%I in ('powershell -noprofile "iex (${%~f0} | out-string)"') do (
-    echo You chose %%~I
+    bin\Debug\net472\eepassem.exe %%~I
 )
 goto :EOF
 
@@ -17,6 +18,6 @@ $f = new-object Windows.Forms.OpenFileDialog
 $f.InitialDirectory = pwd
 $f.Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*"
 $f.ShowHelp = $true
-$f.Multiselect = $true
+$f.Multiselect = $false
 [void]$f.ShowDialog()
 if ($f.Multiselect) { $f.FileNames } else { $f.FileName }

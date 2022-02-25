@@ -30,15 +30,16 @@ type SymTable =
 type IWord = 
     {
         Dat: uint32}
-        static member JmpCode = uint32 0xF000
+        static member JmpCode = uint32 0xC000
         static member AluOpcField n = uint32 (n <<< 12)
         static member JmpOpcField n = uint32 (n <<< 9)
         static member JmpInvBit b = uint32 <| if b then (1 <<< 8) else 0
         static member Imm8Bit b = uint32 <| if b then (1 <<< 8) else 0
         static member RaField n = uint32 (n <<< 9)
         static member RbField n = uint32 (n <<< 5)
-        static member RbImms5 b imms5 = uint32 <| b <<< 5 + (imms5 &&& 0x1f)
+        static member RbImms5 b imms5 = IWord.RbField b + uint32 (imms5 &&& 0x1f)
         static member Imm8Field n = uint32 ( n &&& 0xFF)
+        static member MemOp n = uint32 0x8000u + (uint32 n <<< 12)
 
 type Token = 
     | ALUOP of int 
@@ -117,6 +118,9 @@ let opMap: Map<string,Token> =
         "JLS", JMPOP (6,true)
         "JSR", JMPOP (7,false)
         "RET", JMPOP (7,true)
+        "#", Hash
+        "[", LBra
+        "]", RBra
         ]
 
 
@@ -144,54 +148,73 @@ let tokenize (s:string) =
             |> (function | None -> ErrorTok $"can't parse {s} as an integer"                 
                          | Some n -> Imm n)
         | None when (Char.IsLetter (s.Chars 0))-> Symbol s
-        | None -> ErrorTok $"'{s} is not recognised")
+        | None -> ErrorTok $"'{s}' is not recognised")
 
 
-let makeOp isJmp (op:Op) =
+let makeOp isJmp (Regist a) (op:Op) =
+    let ra = IWord.RaField a
     fun (symTab:SymTable) ->
         match op with
         | Imm8 n when n <= 255 && n >= -128 -> 
-            Ok <| IWord.Imm8Field n
+            Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
         | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
         | SymImm8 s ->
             symTab.Lookup s
-            |> Result.map (fun n -> IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
+            |> Result.map (fun n -> ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
         | RegOp( r,n) when isJmp ->
             Error $"Jump instruction is not allowed register operand '{r}+{n}'"
         | RegOp(_,n) when n > 15 || n < -16 ->
-            Error $"Imms8 number {n} is not in range -16 .. +16"
+            Error $"Imms5 number {n} is not in range -16 .. +15"
         | RegOp(Regist r,n) ->
-            Ok <| IWord.RbImms5 r n
+            Ok <| ra + IWord.RbImms5 r n
 
-let makeAluOp n op =
+let makeAluOp ra n op =
     fun symTab ->
-        makeOp false op symTab
+        makeOp false ra op symTab
         |> Result.map (fun w -> w + IWord.AluOpcField n)
 
-
-
-let makeJmpOp n inv op =
+let makeMemOp ra n op =
     fun symTab ->
-        makeOp false op symTab
+        makeOp false ra op symTab
+        |> Result.map (fun w -> w + IWord.MemOp n)
+
+
+
+
+let makeJmpOp inv ra n op =
+    fun symTab ->
+        makeOp true ra op symTab
         |> Result.map (fun w -> 
             w + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
     
             
-let rec (|ParseOp|_|) toks =
+let (|ParseOpInner|_|) toks =
     match toks with
-    | [Symbol s] -> 
-        Some (Ok (SymImm8 s))
-    | [Hash; Imm n] | [Imm n]-> 
-        Some (Ok (Imm8 n))
-    | [Reg r; Hash; Imm n] | [Reg r; Imm n] -> 
-        Some (Ok (RegOp(r, n)))
-    | [Reg r] -> 
-        Some (Ok (RegOp(r, 0)))
-    | _ -> None // nothing else matches.
+    | Symbol s :: rest -> 
+        Some (Ok (SymImm8 s), rest)
+    | Hash :: Imm n :: rest| Imm n :: rest -> 
+        Some (Ok (Imm8 n), rest)
+    | Reg r :: Hash :: Imm n :: rest | Reg r :: Imm n :: rest -> 
+        Some (Ok (RegOp(r, n)), rest)
+    | Reg r :: rest -> 
+        Some (Ok (RegOp(r, 0)), rest)
+    | _ -> printfn "Inner:%A" toks; None // nothing else matches.
+
+let (|ParseOp|_|) useBrackets toks =
+    match useBrackets, toks with
+    | true, LBra :: ParseOpInner (op,[] | (op,[RBra]))  -> Some op
+    | false, ParseOpInner( op, []) -> Some op
+    | _ -> printfn "Op: %A" toks; None
 
 // Tokenizes, then parses, a line of text
 let rec parse (line: Line) (tokL: Token list) : Line =
     let nl = {line with LineNo = line.LineNo + 1}
+    let wordOf wordGen ra n op =
+        match op with
+        | Ok op' -> 
+            {nl with Word = Some (wordGen ra n op' line.Table)}
+        | Error s ->
+            {nl with Word = Some (Error s)}
     let lineError s = {nl with Word = Some <| Error s}
     let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
     match error, tokL with
@@ -204,11 +227,13 @@ let rec parse (line: Line) (tokL: Token list) : Line =
         | _, Error s -> lineError s
         | _, Ok table ->
             parse {line with Table = table; Label = Some s} rest
-    | _, ALUOP n :: ParseOp (Ok op) ->
-        {nl with Word = Some (makeAluOp n op line.Table)}
-    | _, JMPOP (n,inv) :: ParseOp (Ok op) ->
-        {nl with Word = Some (makeJmpOp n inv op line.Table)}
-    |_ -> lineError $"Unexpected parse error{tokL}"       
+    | _, ALUOP n :: Reg ra :: ParseOp false (op) ->
+        wordOf makeAluOp ra n op
+    | _, JMPOP (n,inv) :: ParseOp false (op) ->
+        wordOf (makeJmpOp inv) (Regist 0) n op
+    | _, MEMOP n :: Reg ra :: ParseOp true (op) ->
+        wordOf makeMemOp ra n op
+    |_ -> lineError $"Unexpected parse error: {tokL}"       
 
 /// runs the assembler RAPL
 let doLoop() =
@@ -235,6 +260,7 @@ let doLoop() =
  
 
 let parseLines (txtL: string list) =
+    let incAddress (line:Line) = {line with Address = line.Address + 1u}
     let errorLine (line:Line) (msg:string) =
         $"Line no {line.LineNo}: %s{msg}"
 
@@ -246,7 +272,7 @@ let parseLines (txtL: string list) =
 
     let parseFolder (line,outs) tokL =
             let line = parse line tokL
-            line, outs @ [line]
+            incAddress line, outs @ [line]
 
     let tokLines = 
         txtL
@@ -268,17 +294,18 @@ let parseLines (txtL: string list) =
     | lst -> Error lst
 
 let assembler (path:string) =
+    printfn "Starting assembler..."
     let formatAssembly (lines: Line list) =
         lines
         |> List.map (fun line -> 
             let num = line.Address
             let word = match line.Word with | Some (Ok n) -> n | _ -> 0u
-            sprintf "%s" $"%02x{num}: %04x{word}")
+            sprintf "%s" $"0x%02x{num} 0x%04x{word}")
         |> String.concat "\n"
     let ext = IO.Path.GetExtension path
-    let dir = IO.Path.GetDirectoryName
-    match ext with
-    | "txt" ->
+    let dir = IO.Path.GetDirectoryName path
+    match ext.ToUpper() with
+    | ".TXT" ->
         IO.File.ReadAllLines path
         |> Array.toList
         |> parseLines
@@ -296,27 +323,32 @@ let assembler (path:string) =
 
 
 let watch path =
+    let dirToWatch = IO.Path.GetDirectoryName path
+    printfn $"Watching '{path}'"
     let processFile (args: IO.FileSystemEventArgs) =
         printfn "%s" args.FullPath
+        System.Threading.Thread.Sleep 100
+        assembler args.FullPath
+    assembler path
     let fileSystemWatcher = new IO.FileSystemWatcher()   
-    fileSystemWatcher.Path <- path
+    fileSystemWatcher.Path <- dirToWatch
     fileSystemWatcher.NotifyFilter <- IO.NotifyFilters.LastWrite
     fileSystemWatcher.EnableRaisingEvents <- true
     fileSystemWatcher.IncludeSubdirectories <- true
     fileSystemWatcher.Changed.Add processFile
     fileSystemWatcher.Created.Add processFile
-    ()
+    while true do ()
         
  
 [<EntryPoint>]
 let main argv = 
-    let d = IO.Directory.GetCurrentDirectory()
-    printfn "%s" d
-    let watchDir = d + "\\..\\..\\..\\..\\.."
-    let files = IO.Directory.EnumerateFiles watchDir |> Seq.toList
-    printfn "%A" files
+
+ 
 
     printfn "%A" argv
+    match argv with
+    | [|fileToWatch|] -> watch fileToWatch
+    | _ -> printfn "Specify as command line argument a .txt file to watch and assemble"
     0
 
 
