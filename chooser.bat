@@ -5,9 +5,9 @@
 @echo off
 setlocal
 
-
 for /f "delims=" %%I in ('powershell -noprofile "iex (${%~f0} | out-string)"') do (
-    dotnet run  %%~I
+    echo starting assembler...
+    dotnet run --project assem %%~I
 )
 goto :EOF
 
@@ -18,6 +18,6 @@ $f = new-object Windows.Forms.OpenFileDialog
 $f.InitialDirectory = pwd
 $f.Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*"
 $f.ShowHelp = $true
-$f.Multiselect = $false
+$f.Multiselect = $true
 [void]$f.ShowDialog()
 if ($f.Multiselect) { $f.FileNames } else { $f.FileName }
