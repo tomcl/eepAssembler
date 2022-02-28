@@ -138,6 +138,7 @@ let toksToString tokL =
         | Symbol s, _ -> s
         | Comment "",_ -> ""
         | Comment comment, _-> "// " + comment
+        | Imm n,_ -> $"#{n}"
         | _ -> sprintf "'%A'" tok
     tokL
     |> List.map tokToS
@@ -152,6 +153,9 @@ let tokenize (s:string) =
     let s, comment =
         match sL with
         | [] -> "", Comment ""
+        | [commentText] when String.startsWith "//" s' ->
+            "", Comment commentText 
+            
         | line :: comment -> line, Comment ((String.concat "//" comment).Trim())
     s.Split([|' '|], StringSplitOptions.RemoveEmptyEntries)
     |> Array.toList
@@ -250,11 +254,14 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
             {nl with Word = Some (Error s)}
     let lineError s = {nl with Word = Some <| Error s}
     let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
+    let tokString = toksToString tokL
     match error, tokL with
     | Some s, rest -> 
         lineError $"Line {line.LineNo}: Token error: '{s}'", rest
     | _, [] -> 
         {nl with Word = None}, []
+    |_, [Comment s] ->
+        {nl with Word = None}, [Comment s]
     | _, ALUOP n :: Reg ra :: ParseOp false (op) ->
         wordOf makeAluOp ra n op,[]
     | _, JMPOP (n,inv) :: ParseOp false (op) ->
@@ -263,7 +270,11 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         wordOf makeMemOp ra n op, []
     | _, DCW :: Imm n :: rest ->
         {nl with Word = Some (Ok (uint32 n))}, []
-    |_ -> lineError $"Unexpected parse error: {tokL}"   , []
+    | _ when line.Label.IsSome ->
+        lineError $"Error in '{tokString}' after symbol '{line.Label.Value}', \
+                    perhaps this is a mis-spelled opcode mnemonic?",[]
+    | _  -> 
+        lineError $"Unexpected parse error: '{tokString}'"   , []
     |> (fun (line, rest) -> 
         match line, rest with
         | {Word = Some (Error msg)}, _ -> 
@@ -275,7 +286,8 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         | _, rest -> 
             {line with Word = Some (Error (toksToString rest))})
     |> (fun line' -> 
-            {line' with Address = line'.Address + if line.Label = None then 1u else 0u})
+            let usesMemory = line.Label = None && line.Word <> None
+            {line' with Address = line'.Address + if usesMemory then 1u else 0u})
 
 let parse (line: Line) (tokL: Token list) : Line =
     let lineError s = {line with Word = Some <| Error s; LineNo = line.LineNo + 1}
@@ -289,9 +301,9 @@ let parse (line: Line) (tokL: Token list) : Line =
          |  Error _ -> 
              lineError  $"Duplicate label: '{s}'"
          | Ok table' ->
-             parseUnlabelled {line with Table = table'} tokL'
+             parseUnlabelled {line with Table = table'; Label = Some s} tokL'
     | _ ->
-        parseUnlabelled line tokL
+        parseUnlabelled {line with Label = None} tokL
 
 /// runs the assembler RAPL
 let doLoop() =
@@ -320,7 +332,7 @@ let doLoop() =
 let parseLines (txtL: string list) =
     let incAddress (line:Line) = {line with Address = line.Address + 1u}
     let errorLine (line:Line) (msg:string) =
-        $"Line no {line.LineNo - 1}: %s{msg}"
+        $"Line no {line.LineNo}: %s{msg}"
 
     let getErrors (lines: Line list) =
         lines
@@ -354,7 +366,10 @@ let parseLines (txtL: string list) =
         ||> List.fold parseFolder
         |> (fun (line, outs) ->
             match getErrors outs with
-            | [] ->  Ok outs
+            | [] ->  
+                outs
+                |> List.filter (fun line -> line.Word <> None)
+                |> Ok
             | lst -> Error lst)
     | lst -> Error lst
 
@@ -362,7 +377,7 @@ let assembler (path:string) =
     let formatAssembly (lines: Line list) =
         lines
         |> List.map (fun line -> 
-            let num = line.Address - 1u
+            let num = line.Address 
             let word = match line.Word with | Some (Ok n) -> n | _ -> 0u
             sprintf "%s" $"0x%02x{num} 0x%04x{word}")
     
@@ -429,7 +444,7 @@ let main argv =
     match argv with
     | [|pathToWatch|] ->
         watch pathToWatch
-    | _ -> printfn "Specify as command line argument a directory to watch and assemble"
+    | _ -> watch "."
     0
 
 

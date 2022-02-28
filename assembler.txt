@@ -1,4 +1,14 @@
 MOV R0, R1
 LOOP1 ADD R1, #2
 SUB R3, R4
+MOV R3 R4 // commas are optional
+MOV R4, 34 // # is optional
+MOV R4, 0x22 // hex is ok
+MOV R4, 0b100010
+
+//gaps are ignored in fact
+
 LOOP JNE LOOP
+EXT 0x12 // this comment gets removed
+MOV R0, #0x10
+// this is a comment as well
