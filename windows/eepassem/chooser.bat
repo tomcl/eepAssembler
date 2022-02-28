@@ -7,7 +7,7 @@ setlocal
 
 
 for /f "delims=" %%I in ('powershell -noprofile "iex (${%~f0} | out-string)"') do (
-    bin\Debug\net472\eepassem.exe %%~I
+    dotnet run  %%~I
 )
 goto :EOF
 

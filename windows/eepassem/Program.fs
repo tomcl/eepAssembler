@@ -6,6 +6,11 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
+type Op = 
+    | Imm8 of int 
+    | RegOp of (Register * int)
+    | SymImm8 of string
+
 type SymTable = 
     { Table: Map<string,int>; Phase : Phase}
 
@@ -45,6 +50,7 @@ type Token =
     | ALUOP of int 
     | JMPOP of int * bool 
     | MEMOP of int
+    | DCW
     | Imm of int 
     | Reg of Register
     | Symbol of string
@@ -52,6 +58,7 @@ type Token =
     | LBra
     | RBra
     | ErrorTok of string
+    | Comment of string
 
 
 
@@ -63,6 +70,7 @@ type Line =
         Address: uint32
         Table: SymTable
         Phase: Phase
+        Comment: string
     }
         static member First =
             {
@@ -72,14 +80,12 @@ type Line =
                 Address = 0u
                 Table = SymTable.Initial
                 Phase = Phase1
+                Comment = ""
             }
 
 
 
-type Op = 
-    | Imm8 of int 
-    | RegOp of (Register * int)
-    | SymImm8 of string
+
 
 let opMap: Map<string,Token> = 
     Map.ofList [
@@ -121,10 +127,21 @@ let opMap: Map<string,Token> =
         "#", Hash
         "[", LBra
         "]", RBra
+        "DCW", DCW
         ]
 
 
-
+let toksToString tokL =
+    let tokToS (tok:Token) =
+        match tok, Map.tryPick (fun key value -> if value = tok then Some key else None) opMap with
+        | _, Some key-> key
+        | Symbol s, _ -> s
+        | Comment "",_ -> ""
+        | Comment comment, _-> "// " + comment
+        | _ -> sprintf "'%A'" tok
+    tokL
+    |> List.map tokToS
+    |> String.concat  " "
 
 /// split the input line, remove white space, return list of strings as tokens
 let tokenize (s:string) =
@@ -132,10 +149,10 @@ let tokenize (s:string) =
     let sL =
         s'.Split([|"//"|],StringSplitOptions.RemoveEmptyEntries)
         |> Array.toList
-    let s =
+    let s, comment =
         match sL with
-        | [] -> ""
-        | line :: comment -> line
+        | [] -> "", Comment ""
+        | line :: comment -> line, Comment ((String.concat "//" comment).Trim())
     s.Split([|' '|], StringSplitOptions.RemoveEmptyEntries)
     |> Array.toList
     |> List.map (fun s -> s.ToUpper())
@@ -149,6 +166,7 @@ let tokenize (s:string) =
                          | Some n -> Imm n)
         | None when (Char.IsLetter (s.Chars 0))-> Symbol s
         | None -> ErrorTok $"'{s}' is not recognised")
+    |> (fun toks -> toks @ [comment])
 
 
 let makeOp isJmp (Regist a) (op:Op) =
@@ -198,42 +216,82 @@ let (|ParseOpInner|_|) toks =
         Some (Ok (RegOp(r, n)), rest)
     | Reg r :: rest -> 
         Some (Ok (RegOp(r, 0)), rest)
-    | _ -> printfn "Inner:%A" toks; None // nothing else matches.
+    | toks -> Some (Error $"'{toksToString toks}' found when operand expected",[]) // nothing else matches.
+
+let (|ParseComment|_|) comments =
+    match comments with
+    | [ Comment c ] -> Some (Ok c)
+    | toks -> Some (Error $"'{toksToString toks}' found when comment or end-of-line expected")
+
+let makeParse (op:Result<Op,string>) (comment: Result<string,string>) =
+    match op,comment with
+    | Error op, _ -> Some (Error op,"")
+    | _, Error comment -> Some (Error comment,"")
+    | Ok op, Ok comment -> Some (Ok op,comment)
 
 let (|ParseOp|_|) useBrackets toks =
     match useBrackets, toks with
-    | true, LBra :: ParseOpInner (op,[] | (op,[RBra]))  -> Some op
-    | false, ParseOpInner( op, []) -> Some op
-    | _ -> printfn "Op: %A" toks; None
+    | true, LBra :: ParseOpInner (op,ParseComment c | (op,RBra:: ParseComment c)) -> 
+        makeParse op c
+    | false, ParseOpInner( op, ParseComment c) -> 
+        makeParse op c
+    | _ -> 
+        failwithf $"What? Can't parse {(useBrackets, toks)}"
 
 // Tokenizes, then parses, a line of text
-let rec parse (line: Line) (tokL: Token list) : Line =
+let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
+    //printfn $"Parsing {line.Address}:'{toksToString tokL}'"
     let nl = {line with LineNo = line.LineNo + 1}
     let wordOf wordGen ra n op =
         match op with
-        | Ok op' -> 
-            {nl with Word = Some (wordGen ra n op' line.Table)}
-        | Error s ->
+        | Ok op', comment -> 
+            {nl with Word = Some (wordGen ra n op' line.Table); Comment = comment}
+        | Error s, _->
             {nl with Word = Some (Error s)}
     let lineError s = {nl with Word = Some <| Error s}
     let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
     match error, tokL with
-    | Some s, _ -> lineError $"Line {line.LineNo}: {s}"
-    | _, [] -> {nl with Word = None}
-    | _, Symbol s :: rest ->
-        match line.Label, line.Table.AddSymbol s (int line.Address) with
-        | Some s', _ -> 
-            lineError  $"Two labels: '{s}' and '{s'} are not allowed on one line"
-        | _, Error s -> lineError s
-        | _, Ok table ->
-            parse {line with Table = table; Label = Some s} rest
+    | Some s, rest -> 
+        lineError $"Line {line.LineNo}: Token error: '{s}'", rest
+    | _, [] -> 
+        {nl with Word = None}, []
     | _, ALUOP n :: Reg ra :: ParseOp false (op) ->
-        wordOf makeAluOp ra n op
+        wordOf makeAluOp ra n op,[]
     | _, JMPOP (n,inv) :: ParseOp false (op) ->
-        wordOf (makeJmpOp inv) (Regist 0) n op
+        wordOf (makeJmpOp inv) (Regist 0) n op, []
     | _, MEMOP n :: Reg ra :: ParseOp true (op) ->
-        wordOf makeMemOp ra n op
-    |_ -> lineError $"Unexpected parse error: {tokL}"       
+        wordOf makeMemOp ra n op, []
+    | _, DCW :: Imm n :: rest ->
+        {nl with Word = Some (Ok (uint32 n))}, []
+    |_ -> lineError $"Unexpected parse error: {tokL}"   , []
+    |> (fun (line, rest) -> 
+        match line, rest with
+        | {Word = Some (Error msg)}, _ -> 
+            line
+        | _, [Comment comment] ->
+            {line with Comment = comment}
+        | _, [] ->
+            {line with Comment = ""}
+        | _, rest -> 
+            {line with Word = Some (Error (toksToString rest))})
+    |> (fun line' -> 
+            {line' with Address = line'.Address + if line.Label = None then 1u else 0u})
+
+let parse (line: Line) (tokL: Token list) : Line =
+    let lineError s = {line with Word = Some <| Error s; LineNo = line.LineNo + 1}
+    match tokL with
+    | Symbol s :: tokL' ->
+         let table = 
+             match line.Phase with
+             | Phase1 -> line.Table.AddSymbol s (int line.Address)
+             | Phase2 -> Ok line.Table
+         match table with
+         |  Error _ -> 
+             lineError  $"Duplicate label: '{s}'"
+         | Ok table' ->
+             parseUnlabelled {line with Table = table'} tokL'
+    | _ ->
+        parseUnlabelled line tokL
 
 /// runs the assembler RAPL
 let doLoop() =
@@ -262,7 +320,7 @@ let doLoop() =
 let parseLines (txtL: string list) =
     let incAddress (line:Line) = {line with Address = line.Address + 1u}
     let errorLine (line:Line) (msg:string) =
-        $"Line no {line.LineNo}: %s{msg}"
+        $"Line no {line.LineNo - 1}: %s{msg}"
 
     let getErrors (lines: Line list) =
         lines
@@ -271,20 +329,27 @@ let parseLines (txtL: string list) =
                                   | _ -> [])
 
     let parseFolder (line,outs) tokL =
-            let line = parse line tokL
-            incAddress line, outs @ [line]
+            let line = {parse line tokL with Label = None}
+            line, outs @ [line]
 
     let tokLines = 
         txtL
         |> List.map tokenize
 
     let firstPass =
+        let folder line toks =
+            parse {line with Label = None} toks
         (Line.First, tokLines)
-        ||> List.scan parse
+        ||> List.scan folder
+
+
 
     match getErrors firstPass with
     | [] -> 
-        let init = {Line.First with Table = (List.last firstPass).Table}
+        let init = {Line.First with 
+                        Table = (List.last firstPass).Table; 
+                        Address = 0u
+                        Phase = Phase2}
         ((init,[]), tokLines)
         ||> List.fold parseFolder
         |> (fun (line, outs) ->
@@ -294,14 +359,14 @@ let parseLines (txtL: string list) =
     | lst -> Error lst
 
 let assembler (path:string) =
-    printfn "Starting assembler..."
     let formatAssembly (lines: Line list) =
         lines
         |> List.map (fun line -> 
-            let num = line.Address
+            let num = line.Address - 1u
             let word = match line.Word with | Some (Ok n) -> n | _ -> 0u
             sprintf "%s" $"0x%02x{num} 0x%04x{word}")
-        |> String.concat "\n"
+    
+
     let ext = IO.Path.GetExtension path
     let dir = IO.Path.GetDirectoryName path
     match ext.ToUpper() with
@@ -310,31 +375,50 @@ let assembler (path:string) =
         |> Array.toList
         |> parseLines
         |> function | Error lst -> 
-                        printfn "Assembly Errors in file {path}:"
+                        printfn $"Assembly errors in file '{path}':"
                         printfn "%s" (String.concat "\n" lst)
                         ()
                     | Ok lst ->
-                        printfn "%s" (formatAssembly lst)
-                        ()
+                        let pathOut = 
+                            IO.Path.ChangeExtension(path, "ram")
+                        let output = 
+                            formatAssembly lst
+                            |> List.toArray
+                        IO.File.WriteAllLines(pathOut, output)
+                        printfn $"Successful assembly of '{path}'"
+                        printfn $"{output.Length} lines written to '{pathOut}'"
                         
     | s -> 
-        printfn $"EEP1asm is watching {dir}, noted a file extension {ext} only files with extension 'txt' will be assembled"
+        printfn $"EEP1asm is watching {dir}, noted a file extension {ext} \
+                    only files with extension 'txt' will be assembled"
 
 
 
-let watch path =
-    let dirToWatch = IO.Path.GetDirectoryName path
-    printfn $"Watching '{path}'"
+let watch (path:string) =
+    let dir =
+        match IO.Directory.Exists path with
+        | true -> path
+        | false -> IO.Path.GetDirectoryName path
+    let files =
+        IO.Directory.EnumerateFiles dir
+        |> Seq.toList
+        |> List.filter (fun path ->
+            (IO.Path.GetExtension path).ToUpper() = ".TXT")
+    printfn $"Watching '{dir}'"
+
     let processFile (args: IO.FileSystemEventArgs) =
-        printfn "%s" args.FullPath
-        System.Threading.Thread.Sleep 100
-        assembler args.FullPath
-    assembler path
+        let path = args.FullPath
+        let ext = (IO.Path.GetExtension path).ToUpper()
+        if ext = ".TXT" then
+            System.Threading.Thread.Sleep 50
+            assembler args.FullPath
+    files
+    |> List.iter assembler
     let fileSystemWatcher = new IO.FileSystemWatcher()   
-    fileSystemWatcher.Path <- dirToWatch
+    fileSystemWatcher.Path <- dir
     fileSystemWatcher.NotifyFilter <- IO.NotifyFilters.LastWrite
     fileSystemWatcher.EnableRaisingEvents <- true
-    fileSystemWatcher.IncludeSubdirectories <- true
+    fileSystemWatcher.IncludeSubdirectories <- false
     fileSystemWatcher.Changed.Add processFile
     fileSystemWatcher.Created.Add processFile
     while true do ()
@@ -342,13 +426,10 @@ let watch path =
  
 [<EntryPoint>]
 let main argv = 
-
- 
-
-    printfn "%A" argv
     match argv with
-    | [|fileToWatch|] -> watch fileToWatch
-    | _ -> printfn "Specify as command line argument a .txt file to watch and assemble"
+    | [|pathToWatch|] ->
+        watch pathToWatch
+    | _ -> printfn "Specify as command line argument a directory to watch and assemble"
     0
 
 
