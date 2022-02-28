@@ -235,9 +235,9 @@ let makeParse (op:Result<Op,string>) (comment: Result<string,string>) =
 
 let (|ParseOp|_|) useBrackets toks =
     match useBrackets, toks with
-    | true, LBra :: ParseOpInner (op,ParseComment c | (op,RBra:: ParseComment c)) -> 
+    | true, LBra :: ParseOpInner (op,RBra :: ParseComment c) -> 
         makeParse op c
-    | false, ParseOpInner( op, ParseComment c) -> 
+    | _, ParseOpInner( op, ParseComment c) -> 
         makeParse op c
     | _ -> 
         failwithf $"What? Can't parse {(useBrackets, toks)}"

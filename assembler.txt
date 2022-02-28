@@ -1,14 +1,15 @@
 MOV R0, R1
 LOOP1 ADD R1, #2
-SUB R3, R4
+sub r3, r4 // upper/lower case does not matter
 MOV R3 R4 // commas are optional
 MOV R4, 34 // # is optional
 MOV R4, 0x22 // hex is ok
-MOV R4, 0b100010
+MOV R4, #0b100010 // binary is ok
+LDR R0, [R1] // memory addresses enclosed optionally in brackets
 
-//gaps are ignored in fact
+//gaps are ignored
 
-LOOP JNE LOOP
+JNE LOOP1 // jump to instruction tagged LOOP1
 EXT 0x12 // this comment gets removed
 MOV R0, #0x10
 // this is a comment as well
