@@ -106,7 +106,7 @@ let opMap: Map<string,Token> =
         "XOR", ALUOP 6
         "LSR", ALUOP 7
         "LDR", MEMOP 0
-        "STR", MEMOP 1
+        "STR", MEMOP 2
         "CMP", ALUOP 13
         "JMP", JMPOP (0,false)
         "EXT", JMPOP (0,true)
@@ -268,8 +268,9 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         wordOf (makeJmpOp inv) (Regist 0) n op, []
     | _, MEMOP n :: Reg ra :: ParseOp true (op) ->
         wordOf makeMemOp ra n op, []
-    | _, DCW :: Imm n :: rest ->
-        {nl with Word = Some (Ok (uint32 n))}, []
+    | _, [ DCW ; Imm n ; Comment s]
+    | _, [ DCW ; Hash; Imm n ; Comment s] ->
+        {nl with Word = Some (Ok (uint32 n))}, [Comment s]
     | _ when line.Label.IsSome ->
         lineError $"Error in '{tokString}' after symbol '{line.Label.Value}', \
                     perhaps this is a mis-spelled opcode mnemonic?",[]
