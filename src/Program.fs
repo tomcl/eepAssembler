@@ -7,8 +7,9 @@ type Register = Regist of int
 type Phase = | Phase1 | Phase2
 
 type Op = 
+    | Imm4 of int
     | Imm8 of int 
-    | RegOp of (Register * int)
+    | RegOp of Register
     | SymImm8 of string
 
 type SymTable = 
@@ -42,14 +43,23 @@ type IWord =
         static member Imm8Bit b = uint32 <| if b then (1 <<< 8) else 0
         static member RaField n = uint32 (n <<< 9)
         static member RbField n = uint32 (n <<< 5)
-        static member RbImms5 b imms5 = IWord.RbField b + uint32 (imms5 &&& 0x1f)
+        static member RcField n = uint32 (n <<< 2)
+        static member ShiftOpcField n = uint32 (((n &&& 1) <<< 4) + ((n &&& 2) <<< 8 - 1))
+        static member Rb b = IWord.RbField b
         static member Imm8Field n = uint32 ( n &&& 0xFF)
         static member MemOp n = uint32 0x8000u + (uint32 n <<< 12)
+        static member ExtOp n = 0xD000u + uint32 n
+        static member IsThreeRegOp n = 
+            match n with
+            | 0 | 7 | 6 -> false
+            | _ -> true
 
 type Token = 
     | ALUOP of int 
+    | SHIFTOP of int
     | JMPOP of int * bool 
     | MEMOP of int
+    | EXTOP
     | DCW
     | Imm of int 
     | Reg of Register
@@ -103,8 +113,11 @@ let opMap: Map<string,Token> =
         "ADC", ALUOP 3
         "SBC", ALUOP 4
         "AND", ALUOP 5
-        "XOR", ALUOP 6
-        "LSR", ALUOP 7
+        "CMP", ALUOP 6
+        "LSL", SHIFTOP 0
+        "LSR", SHIFTOP 1
+        "ASR", SHIFTOP 2
+        "XSR", SHIFTOP 3
         "LDR", MEMOP 0
         "STR", MEMOP 2
         "CMP", ALUOP 13
@@ -173,53 +186,61 @@ let tokenize (s:string) =
     |> (fun toks -> toks @ [comment])
 
 
-let makeOp isJmp (Regist a) (op:Op) =
+let makeOp isJmp (pc:int) (Regist a) (op:Op) =
     let ra = IWord.RaField a
     fun (symTab:SymTable) ->
         match op with
+        | Imm4 n ->
+            Ok (uint32 n)           
         | Imm8 n when n <= 255 && n >= -128 -> 
             Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
         | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
         | SymImm8 s ->
             symTab.Lookup s
             |> Result.map (fun n -> ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
-        | RegOp( r,n) when isJmp ->
-            Error $"Jump instruction is not allowed register operand '{r}+{n}'"
-        | RegOp(_,n) when n > 15 || n < -16 ->
-            Error $"Imms5 number {n} is not in range -16 .. +15"
-        | RegOp(Regist r,n) ->
-            Ok <| ra + IWord.RbImms5 r n
+        | RegOp (Regist r) when isJmp ->
+            Error $"Jump instruction is not allowed register operand '{r}'"
+        | RegOp(Regist r) ->
+            Ok <| ra + IWord.Rb r
 
 let makeAluOp ra n op =
     fun symTab ->
-        makeOp false ra op symTab
+        makeOp false 0 ra op symTab
         |> Result.map (fun w -> w + IWord.AluOpcField n)
+
+let makeAluOp3 n (Regist a) (Regist b) (Regist c) =
+    fun _ ->
+        if IWord.IsThreeRegOp n then
+            Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.RcField c ||| IWord.AluOpcField n)
+        else
+            Error $"ALU op '{n}' does not support 3 register operands"
+        
 
 let makeMemOp ra n op =
     fun symTab ->
-        makeOp false ra op symTab
+        makeOp false 0 ra op symTab
         |> Result.map (fun w -> w + IWord.MemOp n)
 
 
 
 
-let makeJmpOp inv ra n op =
+let makeJmpOp inv pc ra n op =
     fun symTab ->
-        makeOp true ra op symTab
+        makeOp true pc ra op symTab
         |> Result.map (fun w -> 
-            w + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
-    
+            (w &&& 255u) + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
+
+let makeShiftOp rb ra n op =
+    failwithf "not implemented yet"
             
 let (|ParseOpInner|_|) toks =
     match toks with
     | Symbol s :: rest -> 
         Some (Ok (SymImm8 s), rest)
-    | Hash :: Imm n :: rest| Imm n :: rest -> 
+    | Hash :: Imm n :: rest | Imm n :: rest -> 
         Some (Ok (Imm8 n), rest)
-    | Reg r :: Hash :: Imm n :: rest | Reg r :: Imm n :: rest -> 
-        Some (Ok (RegOp(r, n)), rest)
-    | Reg r :: rest -> 
-        Some (Ok (RegOp(r, 0)), rest)
+    | Reg r :: rest  -> 
+        Some (Ok (RegOp r), rest)
     | toks -> Some (Error $"'{toksToString toks}' found when operand expected",[]) // nothing else matches.
 
 let (|ParseComment|_|) comments =
@@ -232,6 +253,22 @@ let makeParse (op:Result<Op,string>) (comment: Result<string,string>) =
     | Error op, _ -> Some (Error op,"")
     | _, Error comment -> Some (Error comment,"")
     | Ok op, Ok comment -> Some (Ok op,comment)
+
+let (|Imm4Inner|_|) tok =
+    match tok with
+    | Imm n when n >= 0 && n < 16 ->
+        Some (Ok (Imm4 n))
+    | Imm n -> 
+        Some (Error $"'{toksToString [tok]}' found when shift count in range 0 to 15 expected")
+    | _ -> 
+        None
+
+let (|ParseImm4|_|) toks =
+    match toks with
+    | Hash :: Imm4Inner n :: ParseComment c | Imm4Inner n :: ParseComment c -> 
+        makeParse n c
+    | toks -> Some (Error $"'{toksToString toks}' found when integer Shift Count expected","") // nothing else matches.
+
 
 let (|ParseOp|_|) useBrackets toks =
     match useBrackets, toks with
@@ -246,6 +283,15 @@ let (|ParseOp|_|) useBrackets toks =
 let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
     //printfn $"Parsing {line.Address}:'{toksToString tokL}'"
     let nl = {line with LineNo = line.LineNo + 1}
+    let wordOf1 (wordRes: SymTable -> Result<uint32,string>) (c: Result<string,string>)  =
+        match wordRes line.Table, c with
+        | Ok res, Ok comment -> 
+            {nl with Word = Some (Ok res); Comment = comment}
+        | _, Error c ->
+            {nl with Word = Some (Error c)}
+        | Error s, _->
+            {nl with Word = Some (Error s)}
+
     let wordOf wordGen ra n op =
         match op with
         | Ok op', comment -> 
@@ -262,10 +308,16 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = None}, []
     |_, [Comment s] ->
         {nl with Word = None}, [Comment s]
+    |_, SHIFTOP s :: Reg a :: Reg b :: ParseImm4 (op) ->
+        wordOf (makeShiftOp b) a s op, []
+    | _, EXTOP :: ParseOp false (op) ->
+        failwithf "not implemented"
+    | _, ALUOP n :: Reg rc :: Reg ra :: Reg rb :: ParseComment c ->
+        wordOf1 (makeAluOp3 n ra rb rc) c, []
     | _, ALUOP n :: Reg ra :: ParseOp false (op) ->
         wordOf makeAluOp ra n op,[]
     | _, JMPOP (n,inv) :: ParseOp false (op) ->
-        wordOf (makeJmpOp inv) (Regist 0) n op, []
+        wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n op, []
     | _, MEMOP n :: Reg ra :: ParseOp true (op) ->
         wordOf makeMemOp ra n op, []
     | _, [ DCW ; Imm n ; Comment s]
