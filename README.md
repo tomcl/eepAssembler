@@ -12,18 +12,19 @@ The F# source is in `./src/Program.fs`
 
 Before you start:
 
-* Download or fork and clone this repo.
-* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download/visual-studio-sdks) or if you don't want to develop the code [.NET Runtime 6](https://dotnet.microsoft.com/en-us/download/dotnet/6.0) on your systemon your system
+* Download and unzip or fork and clone this repo.
+* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download/visual-studio-sdks) or if you don't want to develop the code [.NET Runtime 6](https://dotnet.microsoft.com/en-us/download/dotnet/6.0) on your system
 
-To run the assembler:
+To run the assembler on any system (see nicer option via windows powershell below):
 
+* start a command line terminal running in this  directory
 * `dotnet run dir`
    * replace `dir` by the directory you want to watch
 * `dotnet run` will watch `.`
 
 ### From windows via powershell
 
-Run `chooser.bat` to use file selection GUI - directory of file selected will be watched.
+Double-click `chooser.bat` from this directory to use file selection GUI - directory of file selected will be watched.
 
 ## Features
 
