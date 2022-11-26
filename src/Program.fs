@@ -37,6 +37,7 @@ type IWord =
     {
         Dat: uint32}
         static member JmpCode = uint32 0xC000
+        static member ExtCode = uint32 0xD000
         static member AluOpcField n = uint32 (n <<< 12)
         static member JmpOpcField n = uint32 (n <<< 9)
         static member JmpInvBit b = uint32 <| if b then (1 <<< 8) else 0
@@ -81,6 +82,7 @@ type Line =
         Table: SymTable
         Phase: Phase
         Comment: string
+        ExtMod: uint32 option
     }
         static member First =
             {
@@ -91,6 +93,7 @@ type Line =
                 Table = SymTable.Initial
                 Phase = Phase1
                 Comment = ""
+                ExtMod = None
             }
 
 
@@ -120,9 +123,8 @@ let opMap: Map<string,Token> =
         "XSR", SHIFTOP 3
         "LDR", MEMOP 0
         "STR", MEMOP 2
-        "CMP", ALUOP 13
         "JMP", JMPOP (0,false)
-        "EXT", JMPOP (0,true)
+        "EXT", EXTOP
         "JNE", JMPOP (1,false)
         "JEQ", JMPOP (1,true)
         "JCS", JMPOP (2,false)
@@ -195,9 +197,16 @@ let makeOp isJmp (pc:int) (Regist a) (op:Op) =
         | Imm8 n when n <= 255 && n >= -128 -> 
             Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
         | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
-        | SymImm8 s ->
+        | SymImm8 s when not isJmp->
             symTab.Lookup s
             |> Result.map (fun n -> ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
+        | SymImm8 s -> // if isJmp
+            symTab.Lookup s
+            |> Result.bind (fun n -> 
+                let offset = n - pc
+                if offset < -128 || offset > 127 
+                then Error "Operand for jump is outside allowed range -128 - +127"
+                else Ok (ra + IWord.Imm8Field offset))
         | RegOp (Regist r) when isJmp ->
             Error $"Jump instruction is not allowed register operand '{r}'"
         | RegOp(Regist r) ->
@@ -248,11 +257,16 @@ let (|ParseComment|_|) comments =
     | [ Comment c ] -> Some (Ok c)
     | toks -> Some (Error $"'{toksToString toks}' found when comment or end-of-line expected")
 
-let makeParse (op:Result<Op,string>) (comment: Result<string,string>) =
+let makeParse extMod (op:Result<Op,string>) (comment: Result<string,string>) =
+    let addExtMod op =
+        match extMod, op with   
+        | None, x -> Ok x
+        | Some _, SymImm8 _ -> Error "EXT cannot be used to modify a symbol - replace the symbol by a literal"
+        | _, x -> Ok x
     match op,comment with
     | Error op, _ -> Some (Error op,"")
     | _, Error comment -> Some (Error comment,"")
-    | Ok op, Ok comment -> Some (Ok op,comment)
+    | Ok op, Ok comment -> Some (addExtMod op,comment)
 
 let (|Imm4Inner|_|) tok =
     match tok with
@@ -266,23 +280,23 @@ let (|Imm4Inner|_|) tok =
 let (|ParseImm4|_|) toks =
     match toks with
     | Hash :: Imm4Inner n :: ParseComment c | Imm4Inner n :: ParseComment c -> 
-        makeParse n c
+        makeParse None n c
     | toks -> Some (Error $"'{toksToString toks}' found when integer Shift Count expected","") // nothing else matches.
 
 
-let (|ParseOp|_|) useBrackets toks =
+let (|ParseOp|_|) extMod useBrackets toks =
     match useBrackets, toks with
     | true, LBra :: ParseOpInner (op,RBra :: ParseComment c) -> 
-        makeParse op c
+        makeParse extMod op c
     | _, ParseOpInner( op, ParseComment c) -> 
-        makeParse op c
+        makeParse extMod op c
     | _ -> 
         failwithf $"What? Can't parse {(useBrackets, toks)}"
 
-// Tokenizes, then parses, a line of text
+// Parses, a tokenised line of text
 let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
     //printfn $"Parsing {line.Address}:'{toksToString tokL}'"
-    let nl = {line with LineNo = line.LineNo + 1}
+    let nl = {line with LineNo = line.LineNo + 1; ExtMod = None}
     let wordOf1 (wordRes: SymTable -> Result<uint32,string>) (c: Result<string,string>)  =
         match wordRes line.Table, c with
         | Ok res, Ok comment -> 
@@ -298,6 +312,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
             {nl with Word = Some (wordGen ra n op' line.Table); Comment = comment}
         | Error s, _->
             {nl with Word = Some (Error s)}
+    let (|ParseOpWithExt|_|) = (|ParseOp|_|) line.ExtMod
     let lineError s = {nl with Word = Some <| Error s}
     let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
     let tokString = toksToString tokL
@@ -310,15 +325,17 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = None}, [Comment s]
     |_, SHIFTOP s :: Reg a :: Reg b :: ParseImm4 (op) ->
         wordOf (makeShiftOp b) a s op, []
-    | _, EXTOP :: ParseOp false (op) ->
-        failwithf "not implemented"
+    | _, [ EXTOP ; Imm n ; Comment s ] when n >= 0 ->
+        {nl with Word = Some (Ok (IWord.ExtCode + uint32 n)); ExtMod = Some (uint32 n &&& 0xFFu)}, [Comment s]
+    | _, [ EXTOP ; Imm n ; Comment s ] -> // n < 0
+        {nl with Word = Some (Error "EXT must have number in range 0 .. 0xFF")}, [Comment s]
     | _, ALUOP n :: Reg rc :: Reg ra :: Reg rb :: ParseComment c ->
         wordOf1 (makeAluOp3 n ra rb rc) c, []
-    | _, ALUOP n :: Reg ra :: ParseOp false (op) ->
+    | _, ALUOP n :: Reg ra :: ParseOpWithExt false (op) ->
         wordOf makeAluOp ra n op,[]
-    | _, JMPOP (n,inv) :: ParseOp false (op) ->
+    | _, JMPOP (n,inv) :: ParseOpWithExt false (op) ->
         wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n op, []
-    | _, MEMOP n :: Reg ra :: ParseOp true (op) ->
+    | _, MEMOP n :: Reg ra :: ParseOpWithExt true (op) ->
         wordOf makeMemOp ra n op, []
     | _, [ DCW ; Imm n ; Comment s]
     | _, [ DCW ; Hash; Imm n ; Comment s] ->
