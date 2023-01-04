@@ -239,8 +239,14 @@ let makeJmpOp inv pc ra n op =
         |> Result.map (fun w -> 
             (w &&& 255u) + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
 
-let makeShiftOp rb ra n op =
-    failwithf "not implemented yet"
+let makeShiftOp (Regist b) (Regist a) n x =
+    fun _ ->
+        match x with
+        | Imm4 sCnt -> 
+            Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.AluOpcField 7 ||| IWord.ShiftOpcField n ||| IWord.Imm8Field sCnt)
+        | _ ->
+            Error $"ALU op '{n}' is not a shift op"
+        
             
 let (|ParseOpInner|_|) toks =
     match toks with
