@@ -13,11 +13,11 @@ The F# source is in `./src/Program.fs`
 Before you start:
 
 * Download and unzip or fork and clone this repo.
-* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download/visual-studio-sdks) or if you don't want to develop the code [.NET Runtime 6](https://dotnet.microsoft.com/en-us/download/dotnet/6.0) on your system
+* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download). (If you have .NeET 7 SDK installed that will also work).
 
 To run the assembler on any system (see nicer option via windows powershell below):
 
-* start a command line terminal running in this  directory
+* start a command line terminal running in this  directory (the one containing the README file).
 * `dotnet run dir`
    * replace `dir` by the directory you want to watch
 * `dotnet run` will watch `.`
