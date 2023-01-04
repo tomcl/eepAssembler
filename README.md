@@ -1,6 +1,6 @@
 # eepAssembler
 
-A simple assembler for EEP1 and EEP2 CPU as taught at Imperial College 2022
+A simple assembler for EEP1 CPU as taught at Imperial College 2023
 
 *This code is written by Tom Clarke with no guarantee as to its correctness: please e-mail me if you find errors*
 
@@ -12,19 +12,19 @@ The F# source is in `./src/Program.fs`
 
 Before you start:
 
-* Download and unzip or fork and clone this repo.
-* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download). (If you have .NeET 7 SDK installed that will also work).
+* Download and unzip the latest release source code or fork and clone this repo.
+* Install [.NET SDK 6](https://dotnet.microsoft.com/en-us/download). (If you have .NET 7 SDK installed that will also work).
 
 To run the assembler on any system (see nicer option via windows powershell below):
 
-* start a command line terminal running in this  directory (the one containing the README file).
+* start a command line terminal running in this directory (the one containing the downloaded README file).
 * `dotnet run dir`
    * replace `dir` by the directory you want to watch
 * `dotnet run` will watch `.`
 
-### From windows via powershell
+### From Windows via powershell
 
-Double-click `chooser.bat` from this directory to use file selection GUI - directory of file selected will be watched.
+Double-click `chooser.bat` from this directory to use file selection GUI - the whole directory of file selected will be watched.
 
 ## Features
 
