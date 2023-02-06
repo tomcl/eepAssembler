@@ -6,9 +6,10 @@ MOV R0, #1
 MOV R1, #1
 MOV R2, R1 // temp := fib2
 ADD R2, R0, R7 // temp := temp + fib1
+ADD R3, R2 // test short-form ADD
 MOV R0, R1 // fib1 := fib2
 MOV R1, R2 // fib2 := temp
-JMP -4 // jump back 4 instructions
+JMP -5 // jump back 4 instructions
 
 
 
