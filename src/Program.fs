@@ -125,8 +125,8 @@ let opMap: Map<string,Token> =
         "STR", MEMOP 2
         "JMP", JMPOP (0,false)
         "EXT", EXTOP
-        "JNE", JMPOP (1,false)
-        "JEQ", JMPOP (1,true)
+        "JNE", JMPOP (1,true)
+        "JEQ", JMPOP (1,false)
         "JCS", JMPOP (2,false)
         "JCC", JMPOP (2,true)
         "JMI", JMPOP (3,false)
