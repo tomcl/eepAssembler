@@ -233,7 +233,7 @@ let makeMemOp ra n op =
 
 
 
-let makeJmpOp inv pc ra n op =
+let makeJmpOp (inv:bool) (pc:int) ra (n:int) op =
     fun symTab ->
         makeOp true pc ra op symTab
         |> Result.map (fun w -> 
@@ -341,8 +341,10 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         wordOf1 (makeAluOp3 n ra rb ra) c, []
     | _, ALUOP n :: Reg ra :: ParseOpWithExt false (op) ->
         wordOf makeAluOp ra n op,[]
-    | _, JMPOP (n,inv) :: ParseOpWithExt false (op) ->
-        wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n op, []
+    | _, [JMPOP (7,true) ; Comment s] -> // special case for RET
+        {nl with Word = Some (Ok (uint32 (IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
+    | _, JMPOP (n1,inv) :: ParseOpWithExt false (op) ->
+        wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n1 op, []
     | _, MEMOP n :: Reg ra :: ParseOpWithExt true (op) ->
         wordOf makeMemOp ra n op, []
     | _, [ DCW ; Imm n ; Comment s]
