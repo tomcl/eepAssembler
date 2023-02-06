@@ -337,6 +337,8 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = Some (Error "EXT must have number in range 0 .. 0xFF")}, [Comment s]
     | _, ALUOP n :: Reg rc :: Reg ra :: Reg rb :: ParseComment c ->
         wordOf1 (makeAluOp3 n ra rb rc) c, []
+    | _, ALUOP n :: Reg ra :: Reg rb :: ParseComment c when n <> 0 ->
+        wordOf1 (makeAluOp3 n ra rb ra) c, []
     | _, ALUOP n :: Reg ra :: ParseOpWithExt false (op) ->
         wordOf makeAluOp ra n op,[]
     | _, JMPOP (n,inv) :: ParseOpWithExt false (op) ->
