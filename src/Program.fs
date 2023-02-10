@@ -331,10 +331,12 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = None}, [Comment s]
     |_, SHIFTOP s :: Reg a :: Reg b :: ParseImm4 (op) ->
         wordOf (makeShiftOp b) a s op, []
-    | _, [ EXTOP ; Imm n ; Comment s ] when n >= 0 ->
-        {nl with Word = Some (Ok (IWord.ExtCode + uint32 n)); ExtMod = Some (uint32 n &&& 0xFFu)}, [Comment s]
-    | _, [ EXTOP ; Imm n ; Comment s ] -> // n < 0
-        {nl with Word = Some (Error "EXT must have number in range 0 .. 0xFF")}, [Comment s]
+    | _, [ EXTOP ; Imm n ; Comment s ]
+    | _, [ EXTOP ; Hash; Imm n ; Comment s ] ->
+        if n >= 0 then 
+            {nl with Word = Some (Ok (IWord.ExtCode + uint32 n)); ExtMod = Some (uint32 n &&& 0xFFu)}, [Comment s]
+        else 
+            {nl with Word = Some (Error "EXT must have number in range 0 .. 0xFF")}, [Comment s]
     | _, ALUOP n :: Reg rc :: Reg ra :: Reg rb :: ParseComment c ->
         wordOf1 (makeAluOp3 n ra rb rc) c, []
     | _, ALUOP n :: Reg ra :: Reg rb :: ParseComment c when n <> 0 ->
@@ -342,7 +344,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
     | _, ALUOP n :: Reg ra :: ParseOpWithExt false (op) ->
         wordOf makeAluOp ra n op,[]
     | _, [JMPOP (7,true) ; Comment s] -> // special case for RET
-        {nl with Word = Some (Ok (uint32 (IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
+        {nl with Word = Some (Ok (uint32 (IWord.JmpCode + IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
     | _, JMPOP (n1,inv) :: ParseOpWithExt false (op) ->
         wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n1 op, []
     | _, MEMOP n :: Reg ra :: ParseOpWithExt true (op) ->
