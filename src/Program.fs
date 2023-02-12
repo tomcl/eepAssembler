@@ -6,7 +6,7 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
-let version = "1.3"
+let version = "1.4"
 
 type Op = 
     | Imm4 of int
