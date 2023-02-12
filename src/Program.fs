@@ -6,6 +6,8 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
+let version = "1.3"
+
 type Op = 
     | Imm4 of int
     | Imm8 of int 
@@ -523,6 +525,7 @@ let watch (path:string) =
  
 [<EntryPoint>]
 let main argv = 
+    printfn $"EEP1 Assembler: Version {version}"
     match argv with
     | [|pathToWatch|] ->
         watch pathToWatch
