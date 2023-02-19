@@ -6,12 +6,14 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
-let version = "1.4"
+let version = "1.6"
 
 type Op = 
     | Imm4 of int
+    | Imm5 of int
     | Imm8 of int 
     | RegOp of Register
+    | OffsetOp of Register * int
     | SymImm8 of string
 
 type SymTable = 
@@ -195,7 +197,9 @@ let makeOp isJmp (pc:int) (Regist a) (op:Op) =
     fun (symTab:SymTable) ->
         match op with
         | Imm4 n ->
-            Ok (uint32 n)           
+            Ok (uint32 n)  
+        | OffsetOp(Regist rb,n) ->
+            Ok <| ra + IWord.RbField rb + IWord.Imm8Field (n &&& 0x1F)            
         | Imm8 n when n <= 255 && n >= -128 -> 
             Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
         | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
@@ -213,6 +217,7 @@ let makeOp isJmp (pc:int) (Regist a) (op:Op) =
             Error $"Jump instruction is not allowed register operand '{r}'"
         | RegOp(Regist r) ->
             Ok <| ra + IWord.Rb r
+        | Imm5 _ -> failwithf "What? Imm5 is not allowed in makeOP"
 
 let makeAluOp ra n op =
     fun symTab ->
@@ -229,8 +234,8 @@ let makeAluOp3 n (Regist a) (Regist b) (Regist c) =
 
 let makeMemOp ra n op =
     fun symTab ->
-        makeOp false 0 ra op symTab
-        |> Result.map (fun w -> w + IWord.MemOp n)
+            makeOp false 0 ra op symTab
+            |> Result.map (fun w -> w + IWord.MemOp n)
 
 
 
@@ -285,12 +290,33 @@ let (|Imm4Inner|_|) tok =
     | _ -> 
         None
 
+let (|Imm5Inner|_|) tok =
+    match tok with
+    | Imm n when n >= -16 && n < 16 ->
+        Some (Ok (Imm5 n))
+    | Imm n -> 
+        Some (Error $"'{toksToString [tok]}' found when shift count in range 0 to 15 expected")
+    | _ -> 
+        None
+
+
 let (|ParseImm4|_|) toks =
     match toks with
     | Hash :: Imm4Inner n :: ParseComment c | Imm4Inner n :: ParseComment c -> 
         makeParse None n c
     | toks -> Some (Error $"'{toksToString toks}' found when integer Shift Count expected","") // nothing else matches.
 
+let (|ParseOffsetMemOp|_|) extMod toks =
+    match toks with
+    | LBra:: Reg n :: Hash :: Imm5Inner imm :: RBra :: ParseComment c 
+    | LBra :: Reg n :: Imm5Inner imm :: RBra :: ParseComment c -> 
+                let getImm4Op = function
+                    | Ok (Imm5 imm) -> Ok <| OffsetOp(n,imm)
+                    | Ok x -> Error $"What? expecting Imm5, {x} should not happen"
+                    | Error s -> Error s
+                makeParse extMod (getImm4Op imm) c
+    | _ -> None
+        
 
 let (|ParseOp|_|) extMod useBrackets toks =
     match useBrackets, toks with
@@ -321,6 +347,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         | Error s, _->
             {nl with Word = Some (Error s)}
     let (|ParseOpWithExt|_|) = (|ParseOp|_|) line.ExtMod
+    let (|ParseOffsetMemOpWithExt|_|) = (|ParseOffsetMemOp|_|) line.ExtMod
     let lineError s = {nl with Word = Some <| Error s}
     let error = List.tryPick (function | ErrorTok s -> Some s | _ -> None) tokL
     let tokString = toksToString tokL
@@ -349,6 +376,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = Some (Ok (uint32 (IWord.JmpCode + IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
     | _, JMPOP (n1,inv) :: ParseOpWithExt false (op) ->
         wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n1 op, []
+    | _, MEMOP n :: Reg ra :: ParseOffsetMemOpWithExt op
     | _, MEMOP n :: Reg ra :: ParseOpWithExt true (op) ->
         wordOf makeMemOp ra n op, []
     | _, [ DCW ; Imm n ; Comment s]
