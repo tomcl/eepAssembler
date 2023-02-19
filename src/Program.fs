@@ -61,6 +61,7 @@ type IWord =
 
 type Token = 
     | ALUOP of int 
+    | MOVEXTRA of int
     | SHIFTOP of int
     | JMPOP of int * bool 
     | MEMOP of int
@@ -115,6 +116,13 @@ let opMap: Map<string,Token> =
         "R6", Reg (Regist 6)
         "R7", Reg (Regist 7)
         "MOV", ALUOP 0
+        "MOVC1", MOVEXTRA 1
+        "MOVC2", MOVEXTRA 2
+        "MOVC3", MOVEXTRA 3
+        "MOVC4", MOVEXTRA 4
+        "MOVC5", MOVEXTRA 5
+        "MOVC6", MOVEXTRA 6
+        "MOVC7", MOVEXTRA 7
         "ADD", ALUOP 1
         "SUB", ALUOP 2
         "ADC", ALUOP 3
@@ -223,6 +231,11 @@ let makeAluOp ra n op =
     fun symTab ->
         makeOp false 0 ra op symTab
         |> Result.map (fun w -> w + IWord.AluOpcField n)
+
+
+let makeMovExtraOp (Regist ra) (Regist rb) x =
+    fun symTab ->
+        Ok (IWord.RaField ra ||| IWord.RbField rb ||| IWord.RcField x ||| IWord.AluOpcField x)
 
 let makeAluOp3 n (Regist a) (Regist b) (Regist c) =
     fun _ ->
@@ -372,6 +385,8 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         wordOf1 (makeAluOp3 n ra rb ra) c, []
     | _, ALUOP n :: Reg ra :: ParseOpWithExt false (op) ->
         wordOf makeAluOp ra n op,[]
+    | _, MOVEXTRA n :: Reg ra :: Reg rb :: ParseComment c ->
+        wordOf1 (makeMovExtraOp ra rb n) c, []
     | _, [JMPOP (7,true) ; Comment s] -> // special case for RET
         {nl with Word = Some (Ok (uint32 (IWord.JmpCode + IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
     | _, JMPOP (n1,inv) :: ParseOpWithExt false (op) ->
