@@ -459,7 +459,7 @@ let doLoop() =
 let parseLines (txtL: string list) =
     let incAddress (line:Line) = {line with Address = line.Address + 1u}
     let errorLine (line:Line) (msg:string) =
-        $"Line no {line.LineNo}: %s{msg}"
+        $"Line no {line.LineNo - 1}: %s{msg}"
 
     let getErrors (lines: Line list) =
         lines
