@@ -235,7 +235,7 @@ let makeAluOp ra n op =
 
 let makeMovExtraOp (Regist ra) (Regist rb) x =
     fun symTab ->
-        Ok (IWord.RaField ra ||| IWord.RbField rb ||| IWord.RcField x ||| IWord.AluOpcField x)
+        Ok (IWord.RaField ra ||| IWord.RbField rb ||| IWord.RcField x)
 
 let makeAluOp3 n (Regist a) (Regist b) (Regist c) =
     fun _ ->
