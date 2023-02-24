@@ -30,7 +30,19 @@ Successful assembly of '.\assem.txt'
 7 lines written to '.\assem.ram'   
 ```
 
-## Troubleshooting
+
+### On Windows systems only via Powershell
+
+Double-click `chooser.bat` from this directory to use file selection GUI - the whole directory of file selected will be watched.
+
+## Features
+
+* The assembler will watch a directory and turn any `.txt` file of EEP1 assembly language into a `.ram` file of machine code suitable for use by Issie.
+* If assembly errors exist they will be printed out
+* Files that change will get re-assembled, so you can edit a file and save it with auto-assembly on save.
+* Lines can be labelled (see `assembler.txt`) and labels used in jump or memory instructions as Imm8 operands.
+
+## Troubleshooting your installation
 
 Uptodate as of Feb 2023.
 
@@ -58,22 +70,15 @@ The important bits are: .NET SDK, Version: 7, RID xxxx-x64
 
 What can go wrong: 
 
-* Even though you have installed 64 bit dotnet SDK, you have a previous 32 bit install that was done earlir and dotnet on a command line always finds that one - change your path
+* Even though you have installed 64 bit dotnet SDK, you have a previous 32 bit install that was done earlier and dotnet on a command line always finds that one - change your path
 * You have dotnet 7 installed - but not the SDK
 * You have dotnet 6 intsalled, but not dotnet 7
 
+### For more insight
 
-### On Windows systems only via Powershell
-
-Double-click `chooser.bat` from this directory to use file selection GUI - the whole directory of file selected will be watched.
-
-## Features
-
-* The assembler will watch a directory and turn any `.txt` file of EEP1 assembly language into a `.ram` file of machine code suitable for use by Issie.
-* If assembly errors exist they will be printed out
-* Files that change will get re-assembled, so you can edit a file and save it with auto-assembly on save.
-* Lines can be labelled (see `assembler.txt`) and labels used in jump or memory instructions as Imm8 operands.
-
+* Run a command prompt in the eepassembler directory (then one containing chooser.bat).
+* Run `dotnet run`.
+* Check the messages tehre, e.g. which version, is tehre an error.
 
 
 ## To develop
