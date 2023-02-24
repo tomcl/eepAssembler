@@ -6,7 +6,7 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
-let version = "1.7"
+let version = "1.8"
 
 type Op = 
     | Imm4 of int
@@ -573,8 +573,12 @@ let main argv =
     | [|pathToWatch|] ->
         watch pathToWatch
     | badPath -> 
-        printfn $"Sorry - I cannot use chooser.bat to select a path containing spaces. Selecting the eepassem directory instead"
-        watch "."
+        let cLine = (System.Environment.CommandLine)[11..-1]
+        printfn $"Command Line: `{cLine}`"
+        printfn "Sorry - I do not understand this command line - expecting a single file name argument"
+        printfn "press any key to exit"
+        Console.ReadKey() |> ignore
+
     0
 
 
