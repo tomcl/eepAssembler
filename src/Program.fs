@@ -6,7 +6,7 @@ type Register = Regist of int
 
 type Phase = | Phase1 | Phase2
 
-let version = "1.6"
+let version = "1.7"
 
 type Op = 
     | Imm4 of int
@@ -572,7 +572,9 @@ let main argv =
     match argv with
     | [|pathToWatch|] ->
         watch pathToWatch
-    | _ -> watch "."
+    | badPath -> 
+        printfn $"Sorry - I cannot use chooser.bat to select a path containing spaces. Selecting the eepassem directory instead"
+        watch "."
     0
 
 
