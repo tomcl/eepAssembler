@@ -572,6 +572,9 @@ let main argv =
     match argv with
     | [|pathToWatch|] ->
         watch pathToWatch
+    | [||] ->
+        printfn "Running assembler in its own directory"
+        watch "."
     | badPath -> 
         let cLine = (System.Environment.CommandLine)[11..-1]
         printfn $"Command Line: `{cLine}`"
