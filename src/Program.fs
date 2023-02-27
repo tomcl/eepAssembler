@@ -58,6 +58,8 @@ type IWord =
             match n with
             | 0 | 7 | 6 -> false
             | _ -> true
+        static member makeMOVC(c, a, b) =
+            IWord.RcField c + IWord.RaField a + IWord.RbField b
 
 type Token = 
     | ALUOP of int 
@@ -67,6 +69,10 @@ type Token =
     | MEMOP of int
     | EXTOP
     | DCW
+    | ORG
+    | RETINT
+    | SETI
+    | CLRI
     | Imm of int 
     | Reg of Register
     | Symbol of string
@@ -155,6 +161,10 @@ let opMap: Map<string,Token> =
         "[", LBra
         "]", RBra
         "DCW", DCW
+        "ORG", ORG
+        "RETINT", RETINT
+        "SETI", SETI
+        "CLRI", CLRI
         ]
 
 
@@ -397,6 +407,10 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
     | _, [ DCW ; Imm n ; Comment s]
     | _, [ DCW ; Hash; Imm n ; Comment s] ->
         {nl with Word = Some (Ok (uint32 n))}, [Comment s]
+    | _, [ORG ; Imm n;  Comment s]
+    | _, [ORG ; Hash; Imm n;  Comment s] ->
+        {nl with Address = (if nl.Address = 0u then uint32 n else uint32 n - 1u); Word = None}, [Comment s]
+        
     | _ when line.Label.IsSome ->
         lineError $"Error in '{tokString}' after symbol '{line.Label.Value}', \
                     perhaps this is a mis-spelled opcode mnemonic?",[]
@@ -414,6 +428,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
             {line with Word = Some (Error (toksToString rest))})
     |> (fun line' -> 
             let usesMemory = line.Label = None && line.Word <> None
+            printfn $"line:{line'.LineNo} usesMemory={usesMemory}"
             {line' with Address = line'.Address + if usesMemory then 1u else 0u})
 
 let parse (line: Line) (tokL: Token list) : Line =
