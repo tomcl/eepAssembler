@@ -2,7 +2,7 @@
 open System
 open EEExtensions
 
-type Register = Regist of int
+type Register = Regist of int | Flags | PCX
 
 type Phase = | Phase1 | Phase2
 
@@ -165,6 +165,8 @@ let opMap: Map<string,Token> =
         "RETINT", RETINT
         "SETI", SETI
         "CLRI", CLRI
+        "FLAGS", Reg Flags
+        "PCX", Reg PCX
         ]
 
 
@@ -209,50 +211,76 @@ let tokenize (s:string) =
         | None -> ErrorTok $"'{s}' is not recognised")
     |> (fun toks -> toks @ [comment])
 
+let checkReg ra =
+    match ra with
+    | Regist a-> Ok a
+    | ra -> Error $"{ra} is not allowed as an operand in this instruction"
 
-let makeOp isJmp (pc:int) (Regist a) (op:Op) =
-    let ra = IWord.RaField a
+let check2Regs ra rb =
+    checkReg ra
+    |> Result.bind (fun a -> 
+        checkReg rb
+        |> Result.map (fun b -> (a,b)))
+
+let check3Regs ra rb rc =
+    check2Regs ra rb
+    |> Result.bind (fun (a,b) -> 
+        checkReg rc
+        |> Result.map (fun c -> (a,b,c)))
+
+let makeOp isJmp (pc:int) (a: int) (op:Op) =            
     fun (symTab:SymTable) ->
+        let ra =  IWord.RaField a
         match op with
-        | Imm4 n ->
+        |  Imm4 n ->
             Ok (uint32 n)  
-        | OffsetOp(Regist rb,n) ->
-            Ok <| ra + IWord.RbField rb + IWord.Imm8Field (n &&& 0x1F)            
-        | Imm8 n when n <= 255 && n >= -128 -> 
+        |  OffsetOp(Regist rb,n) ->
+            Ok <| ra + IWord.RbField rb + IWord.Imm8Field (n &&& 0x1F) 
+        | OffsetOp(rb,_) ->
+           Error $"{rb} is not allowed as an operand in this instruction"
+        |  Imm8 n when n <= 255 && n >= -128 -> 
             Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
-        | Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
-        | SymImm8 s when not isJmp->
+        |  Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
+        |  SymImm8 s when not isJmp->
             symTab.Lookup s
             |> Result.map (fun n -> ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
-        | SymImm8 s -> // if isJmp
+        |  SymImm8 s -> // if isJmp
             symTab.Lookup s
             |> Result.bind (fun n -> 
                 let offset = n - pc
                 if offset < -128 || offset > 127 
                 then Error "Operand for jump is outside allowed range -128 - +127"
                 else Ok (ra + IWord.Imm8Field offset))
-        | RegOp (Regist r) when isJmp ->
+        |  RegOp (r) when isJmp ->
             Error $"Jump instruction is not allowed register operand '{r}'"
-        | RegOp(Regist r) ->
+        |  RegOp(Regist r) ->
             Ok <| ra + IWord.Rb r
+        | RegOp r ->
+            Error $"{r} is not allowed as an operand in this instruction"           
         | Imm5 _ -> failwithf "What? Imm5 is not allowed in makeOP"
+
 
 let makeAluOp ra n op =
     fun symTab ->
-        makeOp false 0 ra op symTab
+        checkReg ra
+        |> Result.bind (fun a -> makeOp false 0 a op symTab)
         |> Result.map (fun w -> w + IWord.AluOpcField n)
 
 
-let makeMovExtraOp (Regist ra) (Regist rb) x =
+let makeMovExtraOp ra rb x =
     fun symTab ->
-        Ok (IWord.RaField ra ||| IWord.RbField rb ||| IWord.RcField x)
+        check2Regs ra rb
+        |> Result.bind (fun (a,b) -> 
+            Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.RcField x))
 
-let makeAluOp3 n (Regist a) (Regist b) (Regist c) =
-    fun _ ->
-        if IWord.IsThreeRegOp n then
-            Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.RcField c ||| IWord.AluOpcField n)
-        else
-            Error $"ALU op '{n}' does not support 3 register operands"
+let makeAluOp3 n ra rb rc =    
+    fun _  ->
+        check3Regs ra rb rc
+        |> Result.bind (fun (a,b,c) ->
+            if IWord.IsThreeRegOp n then
+                Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.RcField c ||| IWord.AluOpcField n)
+            else
+                Error $"ALU op '{n}' does not support 3 register operands")
         
 
 let makeMemOp ra n op =
@@ -269,13 +297,15 @@ let makeJmpOp (inv:bool) (pc:int) ra (n:int) op =
         |> Result.map (fun w -> 
             (w &&& 255u) + IWord.JmpOpcField n + IWord.JmpInvBit inv + IWord.JmpCode)
 
-let makeShiftOp (Regist b) (Regist a) n x =
+let makeShiftOp rb ra n x =
     fun _ ->
-        match x with
-        | Imm4 sCnt -> 
-            Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.AluOpcField 7 ||| IWord.ShiftOpcField n ||| IWord.Imm8Field sCnt)
-        | _ ->
-            Error $"ALU op '{n}' is not a shift op"
+        check2Regs ra rb
+        |> Result.bind (fun (a,b) ->
+            match x with
+            | Imm4 sCnt -> 
+                Ok (IWord.RaField a ||| IWord.RbField b ||| IWord.AluOpcField 7 ||| IWord.ShiftOpcField n ||| IWord.Imm8Field sCnt)
+            | _ ->
+                Error $"ALU op '{n}' is not a shift op")
         
             
 let (|ParseOpInner|_|) toks =
@@ -369,6 +399,8 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
             {nl with Word = Some (wordGen ra n op' line.Table); Comment = comment}
         | Error s, _->
             {nl with Word = Some (Error s)}
+    let makeMovcInstruction c a b s = 
+        {nl with Word = Some (Ok <| IWord.makeMOVC(c,a,b))}, [Comment s]
     let (|ParseOpWithExt|_|) = (|ParseOp|_|) line.ExtMod
     let (|ParseOffsetMemOpWithExt|_|) = (|ParseOffsetMemOp|_|) line.ExtMod
     let lineError s = {nl with Word = Some <| Error s}
@@ -381,6 +413,17 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         {nl with Word = None}, []
     |_, [Comment s] ->
         {nl with Word = None}, [Comment s]
+    | _, [RETINT; Comment s] -> makeMovcInstruction 6 0 0 s
+    | _, [SETI; Comment s] -> makeMovcInstruction 6 0 1 s
+    | _, [CLRI; Comment s] -> makeMovcInstruction 6 0 2 s
+    | _, [ALUOP 0; Reg Flags; Reg (Regist a); Comment s ] -> 
+        makeMovcInstruction 7 a 0 s
+    | _, [ALUOP 0; Reg PCX; Reg (Regist a); Comment s ] -> 
+        makeMovcInstruction 7 a 1 s
+    | _, [ALUOP 0; Reg (Regist a); Reg Flags; Comment s ] -> 
+        makeMovcInstruction 7 a 2 s
+    | _, [ALUOP 0; Reg (Regist a); Reg PCX;  Comment s ] -> 
+        makeMovcInstruction 7 a 3 s
     |_, SHIFTOP s :: Reg a :: Reg b :: ParseImm4 (op) ->
         wordOf (makeShiftOp b) a s op, []
     | _, [ EXTOP ; Imm n ; Comment s ]
@@ -400,16 +443,16 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
     | _, [JMPOP (7,true) ; Comment s] -> // special case for RET
         {nl with Word = Some (Ok (uint32 (IWord.JmpCode + IWord.JmpOpcField 7 + IWord.JmpInvBit true)))}, [Comment s]
     | _, JMPOP (n1,inv) :: ParseOpWithExt false (op) ->
-        wordOf (makeJmpOp inv (int nl.Address)) (Regist 0) n1 op, []
-    | _, MEMOP n :: Reg ra :: ParseOffsetMemOpWithExt op
-    | _, MEMOP n :: Reg ra :: ParseOpWithExt true (op) ->
-        wordOf makeMemOp ra n op, []
+        wordOf (makeJmpOp inv (int nl.Address)) 0 n1 op, []
+    | _, MEMOP n :: Reg (Regist a) :: ParseOffsetMemOpWithExt op
+    | _, MEMOP n :: Reg (Regist a) :: ParseOpWithExt true (op) ->
+        wordOf makeMemOp a n op, []
     | _, [ DCW ; Imm n ; Comment s]
     | _, [ DCW ; Hash; Imm n ; Comment s] ->
         {nl with Word = Some (Ok (uint32 n))}, [Comment s]
     | _, [ORG ; Imm n;  Comment s]
     | _, [ORG ; Hash; Imm n;  Comment s] ->
-        {nl with Address = (if nl.Address = 0u then uint32 n else uint32 n - 1u); Word = None}, [Comment s]
+        {nl with Address = uint32 n; Word = None}, [Comment s]
         
     | _ when line.Label.IsSome ->
         lineError $"Error in '{tokString}' after symbol '{line.Label.Value}', \
@@ -427,8 +470,8 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
         | _, rest -> 
             {line with Word = Some (Error (toksToString rest))})
     |> (fun line' -> 
-            let usesMemory = line.Label = None && line.Word <> None
-            printfn $"line:{line'.LineNo} usesMemory={usesMemory}"
+            let usesMemory = line'.Word <> None
+            printfn $"line:{line'.LineNo}, address:{line'.Address} toks={tokString}, usesMemory={usesMemory}"
             {line' with Address = line'.Address + if usesMemory then 1u else 0u})
 
 let parse (line: Line) (tokL: Token list) : Line =
@@ -521,7 +564,7 @@ let assembler (path:string) =
         |> List.map (fun line -> 
             let num = line.Address 
             let word = match line.Word with | Some (Ok n) -> n | _ -> 0u
-            sprintf "%s" $"0x%02x{num} 0x%04x{word}")
+            sprintf "%s" $"0x%02x{num-1u} 0x%04x{word}")
     
 
     let ext = IO.Path.GetExtension path
