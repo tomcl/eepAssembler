@@ -6,7 +6,7 @@ type Register = Regist of int | Flags | PCX
 
 type Phase = | Phase1 | Phase2
 
-let version = "2.0"
+let version = "2.1"
 
 type Op = 
     | Imm4 of int
@@ -244,12 +244,14 @@ let makeOp isJmp (pc:int) (a: int) (op:Op) =
         |  SymImm8 s when not isJmp->
             symTab.Lookup s
             |> Result.map (fun n -> ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp))
+        | SymImm8 s when symTab.Phase = Phase1 -> // if isJump
+            Ok (ra) // can't error in Phase1 to allow forward references
         |  SymImm8 s -> // if isJmp
             symTab.Lookup s
             |> Result.bind (fun n -> 
                 let offset = n - pc
                 if offset < -128 || offset > 127 
-                then Error "Operand for jump is outside allowed range -128 - +127"
+                then Error $"Operand for jump is outside allowed range -128 - +127: target=%0x{n}, pc=%0x{pc}"
                 else Ok (ra + IWord.Imm8Field offset))
         |  RegOp (r) when isJmp ->
             Error $"Jump instruction is not allowed register operand '{r}'"
@@ -382,7 +384,8 @@ let (|ParseOp|_|) extMod useBrackets toks =
 
 // Parses, a tokenised line of text
 let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
-    //printfn $"Parsing {line.Address}:'{toksToString tokL}'"
+    let line = {line with Table = {line.Table with Phase = line.Phase}}
+    //printfn $"Parsing {line.Phase} {line.Table.Phase} {line.Address}:'{toksToString tokL}'"
     let nl = {line with LineNo = line.LineNo + 1; ExtMod = None}
     let wordOf1 (wordRes: SymTable -> Result<uint32,string>) (c: Result<string,string>)  =
         match wordRes line.Table, c with
