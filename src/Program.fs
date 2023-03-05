@@ -6,7 +6,7 @@ type Register = Regist of int | Flags | PCX
 
 type Phase = | Phase1 | Phase2
 
-let version = "1.8"
+let version = "2.0"
 
 type Op = 
     | Imm4 of int
@@ -238,7 +238,7 @@ let makeOp isJmp (pc:int) (a: int) (op:Op) =
             Ok <| ra + IWord.RbField rb + IWord.Imm8Field (n &&& 0x1F) 
         | OffsetOp(rb,_) ->
            Error $"{rb} is not allowed as an operand in this instruction"
-        |  Imm8 n when n <= 255 && n >= -128 -> 
+        |  Imm8 n when n <= 255 && n >= -128 || n <= 65535 && n >= 65536 - 128 -> 
             Ok <| ra + IWord.Imm8Field n + IWord.Imm8Bit (not isJmp)
         |  Imm8 n -> Error $"Immediate operand {n} is not in the allowed range 255 .. -128"
         |  SymImm8 s when not isJmp->
@@ -471,7 +471,7 @@ let rec parseUnlabelled (line: Line) (tokL: Token list) : Line =
             {line with Word = Some (Error (toksToString rest))})
     |> (fun line' -> 
             let usesMemory = line'.Word <> None
-            printfn $"line:{line'.LineNo}, address:{line'.Address} toks={tokString}, usesMemory={usesMemory}"
+            //printfn $"line:{line'.LineNo}, address:{line'.Address} toks={tokString}, usesMemory={usesMemory}"
             {line' with Address = line'.Address + if usesMemory then 1u else 0u})
 
 let parse (line: Line) (tokL: Token list) : Line =
