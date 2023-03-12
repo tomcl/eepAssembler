@@ -624,7 +624,7 @@ let watch (path:string) =
     fileSystemWatcher.IncludeSubdirectories <- false
     fileSystemWatcher.Changed.Add processFile
     fileSystemWatcher.Created.Add processFile
-    while true do ()
+    Threading.Thread.Sleep(Threading.Timeout.Infinite)
         
  
 [<EntryPoint>]
