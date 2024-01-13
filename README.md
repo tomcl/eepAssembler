@@ -13,7 +13,7 @@ The F# source is in `./src/Program.fs`
 Before you start:
 
 * Download and unzip the latest release source code or fork and clone this repo.
-* Install [.NET 64 bit SDK 7](https://dotnet.microsoft.com/en-us/download). 
+* Install [.NET 64 bit SDK 8](https://dotnet.microsoft.com/en-us/download). 
 
 To run the assembler on any system (see nicer option via Windows Powershell below):
 
