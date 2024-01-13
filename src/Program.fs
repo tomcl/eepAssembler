@@ -6,7 +6,7 @@ type Register = Regist of int | Flags | PCX
 
 type Phase = | Phase1 | Phase2
 
-let version = "2.2"
+let version = "2.3"
 
 type Op = 
     | Imm4 of int
