@@ -122,13 +122,13 @@ let opMap: Map<string,Token> =
         "R6", Reg (Regist 6)
         "R7", Reg (Regist 7)
         "MOV", ALUOP 0
-        "MOVC1", MOVEXTRA 1
-        "MOVC2", MOVEXTRA 2
-        "MOVC3", MOVEXTRA 3
-        "MOVC4", MOVEXTRA 4
-        "MOVC5", MOVEXTRA 5
-        "MOVC6", MOVEXTRA 6
-        "MOVC7", MOVEXTRA 7
+        "MOVC1", MOVEXTRA 1 // user-defined MOV instruction for extensions
+        "MOVC2", MOVEXTRA 2 // user-defined MOV instruction for extensions
+        "MOVC3", MOVEXTRA 3 // user-defined MOV instruction for extensions
+        "MOVC4", MOVEXTRA 4 // user-defined MOV instruction for extensions
+        "MOVC5", MOVEXTRA 5 // user-defined MOV instruction for extensions
+        "MOVC6", MOVEXTRA 6 // used for interrupts
+        "MOVC7", MOVEXTRA 7 // used for interrupts
         "ADD", ALUOP 1
         "SUB", ALUOP 2
         "ADC", ALUOP 3
