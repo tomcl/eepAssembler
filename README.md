@@ -46,7 +46,7 @@ Double-click `chooser.bat` from this directory to use file selection GUI - the w
 
 Uptodate as of Feb 2023.
 
-If this program does not run it will likely be because you have the wrong version of dotnet installed. You need 64 bit 7 SDK. Check you have this as follows:
+If this program does not run it will likely be because you have the wrong version of .Net installed. You need 64 bit .Net 8 SDK. Check you have this as follows:
 
 * Run a commande prompt (Windows key-r -> cmd, or equiv on other systems)
 * `dotnet --info`
@@ -56,7 +56,7 @@ You should get something like:
 ```
 C:\Users\tomcl>dotnet --info
 .NET SDK:
- Version:   7.0.101
+ Version:   8.0.101
  Commit:    bb24aafa11
 
 Runtime Environment:
@@ -64,21 +64,21 @@ Runtime Environment:
  OS Version:  10.0.19044
  OS Platform: Windows
  RID:         win10-x64
- Base Path:   C:\Program Files\dotnet\sdk\7.0.101\
+ Base Path:   C:\Program Files\dotnet\sdk\8.0.101\
 ```
-The important bits are: .NET SDK, Version: 7, RID xxxx-x64
+The important bits are: .NET SDK, Version: 8, RID xxxx-x64
 
 What can go wrong: 
 
 * Even though you have installed 64 bit dotnet SDK, you have a previous 32 bit install that was done earlier and dotnet on a command line always finds that one - change your path
-* You have dotnet 7 installed - but not the SDK
-* You have dotnet 6 intsalled, but not dotnet 7
+* You have dotnet 8 installed - but not the SDK
+* You have dotnet 6 or 7 installed, but not dotnet 8
 
 ### For more insight
 
 * Run a command prompt in the eepassembler directory (then one containing chooser.bat).
 * Run `dotnet run`.
-* Check the messages tehre, e.g. which version, is tehre an error.
+* Check the messages there, e.g. which version, is there an error.
 
 
 ## To develop
