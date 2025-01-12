@@ -1,6 +1,6 @@
 # eepAssembler
 
-A simple assembler for EEP1 CPU as taught at Imperial College 2023
+A simple assembler for EEP1 CPU as taught at Imperial College 2023, 2024
 
 *This code is written by Tom Clarke with no guarantee as to its correctness: please e-mail me if you find errors*
 
